@@ -46,17 +46,22 @@ export default function ToteInventoryApp() {
   }, []);
 
   const loadData = async () => {
+    console.log('🔄 Starting data load...');
     setLoading(true);
     try {
       const data = await dbService.getTotes();
-      console.log('Loaded totes data:', data); // Debug log
+      console.log('📊 Raw data from database:', data);
+      console.log('📊 Data length:', data?.length || 0);
+      
       setTotes(data);
+      console.log('✅ Totes state updated with:', data?.length || 0, 'items');
     } catch (error) {
-      console.error('Failed to load data:', error);
+      console.error('❌ Failed to load data:', error);
       // Show user-friendly error message
       alert('Unable to load data. Using local storage as backup.');
     } finally {
       setLoading(false);
+      console.log('🏁 Data loading complete');
     }
   };
 
@@ -115,18 +120,28 @@ export default function ToteInventoryApp() {
       updated_at: new Date().toISOString()
     };
 
-    console.log('Attempting to save tote:', newTote); // Debug log
+    console.log('💾 Attempting to save tote:', newTote);
 
     try {
       const savedTote = await dbService.saveTote(newTote);
-      console.log('Tote saved successfully:', savedTote); // Debug log
-      await loadData(); // Refresh data after save
+      console.log('✅ Tote saved successfully:', savedTote);
+      
+      // Update local state immediately for instant UI feedback
+      if (editingTote) {
+        setTotes(prev => prev.map(t => t.id === savedTote.id ? savedTote : t));
+      } else {
+        setTotes(prev => [...prev, savedTote]);
+      }
+      
+      // Also refresh from database to make sure we're in sync
+      await loadData();
+      
       resetForm();
       setView('grid');
-      alert('Tote saved successfully!'); // Success feedback
+      alert('✅ Tote saved successfully!');
     } catch (error) {
-      console.error('Failed to save tote:', error);
-      alert('Failed to save tote. Please check your internet connection and try again.');
+      console.error('❌ Failed to save tote:', error);
+      alert('❌ Failed to save tote. Please check your internet connection and try again.');
     }
   };
 
@@ -148,18 +163,27 @@ export default function ToteInventoryApp() {
     setView('addTote');
   };
 
-  const filteredTotes = totes.filter(tote =>
-    tote.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    tote.position.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    tote.items.some(item => item.name.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
-
   const getTotesByPosition = () => {
+    console.log('🗂️ Filtering totes for display:');
+    console.log('🗂️ Total totes in state:', totes.length);
+    console.log('🗂️ Search term:', searchTerm);
+    
+    const filtered = totes.filter(tote =>
+      tote.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      tote.position.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      tote.items.some(item => item.name.toLowerCase().includes(searchTerm.toLowerCase()))
+    );
+    
+    console.log('🗂️ Filtered totes count:', filtered.length);
+    console.log('🗂️ Filtered totes:', filtered);
+    
     const grouped = {};
-    filteredTotes.forEach(tote => {
+    filtered.forEach(tote => {
       if (!grouped[tote.position]) grouped[tote.position] = [];
       grouped[tote.position].push(tote);
     });
+    
+    console.log('🗂️ Grouped by position:', grouped);
     return grouped;
   };
 
@@ -433,11 +457,23 @@ export default function ToteInventoryApp() {
               </div>
               Tote Inventory
             </h1>
-            <div className="text-xs sm:text-sm text-gray-300 bg-gray-700/50 px-3 sm:px-4 py-2 rounded-full border border-gray-600/50 flex items-center gap-2">
-              <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-              <span className="text-purple-400 font-semibold">{totes.length}</span>
-              <span className="text-gray-400 hidden sm:inline">/26 totes • Cloud Sync Active</span>
-              <span className="text-gray-400 sm:hidden">/{totes.length} totes</span>
+            <div className="flex items-center gap-2 sm:gap-3">
+              <div className="text-xs sm:text-sm text-gray-300 bg-gray-700/50 px-3 sm:px-4 py-2 rounded-full border border-gray-600/50 flex items-center gap-2">
+                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                <span className="text-purple-400 font-semibold">{totes.length}</span>
+                <span className="text-gray-400 hidden sm:inline">/26 totes • Cloud Sync Active</span>
+                <span className="text-gray-400 sm:hidden">/{totes.length} totes</span>
+              </div>
+              <button
+                onClick={loadData}
+                disabled={loading}
+                className="p-2 text-purple-400 hover:text-purple-300 hover:bg-purple-500/20 rounded-lg transition-all duration-300 disabled:opacity-50"
+                title="Refresh data"
+              >
+                <svg className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
             </div>
           </div>
 
