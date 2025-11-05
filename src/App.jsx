@@ -139,8 +139,21 @@ export default function ToteInventoryApp() {
 
   const addItemToList = () => {
     if (currentItem.name.trim()) {
-      setItems([...items, { ...currentItem, id: Date.now() }]);
+      const newItem = { ...currentItem, id: Date.now() };
+      const updatedItems = [...items, newItem];
+      
+      console.log('➕ Adding item to list:');
+      console.log('➕ Current item:', currentItem);
+      console.log('➕ New item with ID:', newItem);
+      console.log('➕ Previous items array:', items);
+      console.log('➕ Updated items array:', updatedItems);
+      
+      setItems(updatedItems);
       setCurrentItem({ name: '', image: null });
+      
+      console.log('➕ Item added successfully, items state updated');
+    } else {
+      console.log('⚠️ Cannot add item: name is empty');
     }
   };
 
@@ -151,6 +164,14 @@ export default function ToteInventoryApp() {
   const saveTote = async () => {
     if (!toteName.trim() || !shelfPosition) return;
 
+    console.log('💾 SAVE TOTE DEBUG:');
+    console.log('💾 Form state - toteName:', toteName);
+    console.log('💾 Form state - shelfPosition:', shelfPosition);
+    console.log('💾 Form state - items:', items);
+    console.log('💾 Form state - items length:', items.length);
+    console.log('💾 Form state - items type:', typeof items);
+    console.log('💾 Form state - is items array?', Array.isArray(items));
+
     const newTote = {
       id: editingTote ? selectedTote.id : Date.now(),
       name: toteName,
@@ -160,7 +181,8 @@ export default function ToteInventoryApp() {
       updated_at: new Date().toISOString()
     };
 
-    console.log('💾 Attempting to save tote:', newTote);
+    console.log('💾 Tote object being saved:', newTote);
+    console.log('💾 Tote.items specifically:', newTote.items);
 
     try {
       const savedTote = await dbService.saveTote(newTote);
@@ -330,7 +352,13 @@ export default function ToteInventoryApp() {
 
               {items.length > 0 && (
                 <div className="border-t border-gray-700/50 pt-6 sm:pt-8">
-                  <h3 className="text-lg sm:text-xl font-bold text-gray-300 mb-4 sm:mb-6">Items ({items.length})</h3>
+                  <h3 className="text-lg sm:text-xl font-bold text-gray-300 mb-4 sm:mb-6">
+                    Items ({items.length})
+                    {(() => {
+                      console.log('📝 Form items list rendering:', items);
+                      return null;
+                    })()}
+                  </h3>
                   <div className="space-y-3 sm:space-y-4">
                     {items.map(item => (
                       <div key={item.id} className="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-gray-700/30 backdrop-blur-xl rounded-xl sm:rounded-2xl border border-gray-600/30">
