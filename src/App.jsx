@@ -54,6 +54,18 @@ export default function ToteInventoryApp() {
       return { totes, searchTerm, view, totesCount: totes.length };
     };
     
+    window.debugFormState = () => {
+      console.log('📝 FORM STATE DEBUG:');
+      console.log('toteName:', toteName);
+      console.log('shelfPosition:', shelfPosition);
+      console.log('items:', items);
+      console.log('items length:', items.length);
+      console.log('currentItem:', currentItem);
+      console.log('editingTote:', editingTote);
+      console.log('selectedTote:', selectedTote);
+      return { toteName, shelfPosition, items, itemsLength: items.length, currentItem, editingTote, selectedTote };
+    };
+    
     window.testSave = async () => {
       console.log('🧪 Testing direct save...');
       const testTote = {
@@ -152,13 +164,55 @@ export default function ToteInventoryApp() {
       setCurrentItem({ name: '', image: null });
       
       console.log('➕ Item added successfully, items state updated');
+      
+      // Add a timeout to check if state persists
+      setTimeout(() => {
+        console.log('⏰ Items state after 100ms:', items);
+        console.log('⏰ Items state should be:', updatedItems);
+      }, 100);
     } else {
       console.log('⚠️ Cannot add item: name is empty');
     }
   };
 
-  const removeItem = (id) => {
-    setItems(items.filter(item => item.id !== id));
+  const removeItem = async (id) => {
+    console.log('🗑️ Removing item with ID:', id);
+    
+    // Update local items state
+    const updatedItems = items.filter(item => item.id !== id);
+    setItems(updatedItems);
+    
+    // If we're viewing a tote detail (selectedTote exists), 
+    // we need to update the database immediately
+    if (selectedTote) {
+      console.log('🗑️ Updating database for selectedTote:', selectedTote.id);
+      try {
+        const updatedTote = {
+          ...selectedTote,
+          items: updatedItems,
+          updated_at: new Date().toISOString()
+        };
+        
+        // Save to database
+        const savedTote = await dbService.saveTote(updatedTote);
+        console.log('✅ Item deleted and tote updated in database:', savedTote);
+        
+        // Update selectedTote state to reflect the change immediately
+        setSelectedTote(savedTote);
+        
+        // Update totes list as well
+        setTotes(prev => prev.map(t => t.id === savedTote.id ? savedTote : t));
+        
+        // Refresh data to ensure consistency
+        await loadData();
+        
+      } catch (error) {
+        console.error('❌ Failed to update tote after item deletion:', error);
+        alert('❌ Failed to delete item. Please try again.');
+        // Revert the local state if database update failed
+        setItems(items);
+      }
+    }
   };
 
   const saveTote = async () => {
@@ -223,6 +277,41 @@ export default function ToteInventoryApp() {
     setItems(tote.items || []);
     setEditingTote(true);
     setView('addTote');
+  };
+
+  const deleteTote = async (toteId) => {
+    console.log('🗑️ Deleting tote with ID:', toteId);
+    
+    // Show confirmation dialog
+    const confirmed = window.confirm('Are you sure you want to delete this tote? This action cannot be undone.');
+    
+    if (!confirmed) {
+      console.log('🚫 Tote deletion cancelled by user');
+      return;
+    }
+    
+    try {
+      // Delete from database
+      await dbService.deleteTote(toteId);
+      console.log('✅ Tote deleted from database successfully');
+      
+      // Update local state
+      setTotes(prev => prev.filter(t => t.id !== toteId));
+      
+      // If we're currently viewing this tote, go back to grid
+      if (selectedTote && selectedTote.id === toteId) {
+        setSelectedTote(null);
+        setView('grid');
+      }
+      
+      // Refresh data to ensure consistency
+      await loadData();
+      
+      alert('✅ Tote deleted successfully!');
+    } catch (error) {
+      console.error('❌ Failed to delete tote:', error);
+      alert('❌ Failed to delete tote. Please check your internet connection and try again.');
+    }
   };
 
   const getTotesByPosition = () => {

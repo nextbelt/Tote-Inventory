@@ -75,6 +75,18 @@ export const dbService = {
         const toteToInsert = { ...tote };
         delete toteToInsert.id; // Remove the timestamp ID
         
+        // Ensure items is properly formatted for JSONB
+        if (toteToInsert.items) {
+          console.log('📝 Ensuring items is properly formatted:', toteToInsert.items);
+          // Make sure items is a valid JSON array
+          toteToInsert.items = Array.isArray(toteToInsert.items) ? toteToInsert.items : [];
+          console.log('📝 Items after formatting:', toteToInsert.items);
+        } else {
+          toteToInsert.items = [];
+        }
+        
+        console.log('📝 Final tote to insert:', toteToInsert);
+        
         const result = await supabase
           .from('totes')
           .insert(toteToInsert)
