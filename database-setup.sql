@@ -13,9 +13,18 @@ CREATE TABLE IF NOT EXISTS totes (
 -- Enable Row Level Security (RLS)
 ALTER TABLE totes ENABLE ROW LEVEL SECURITY;
 
--- Create policy to allow all operations (for development)
+-- Drop existing policy if it exists and create new one
+DROP POLICY IF EXISTS "Allow all operations on totes" ON totes;
 CREATE POLICY "Allow all operations on totes" ON totes
 FOR ALL USING (true) WITH CHECK (true);
 
--- Enable real-time updates
-ALTER PUBLICATION supabase_realtime ADD TABLE totes;
+-- Enable real-time updates (only if not already added)
+DO $$ 
+BEGIN 
+  BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE totes;
+  EXCEPTION 
+    WHEN duplicate_object THEN 
+      RAISE NOTICE 'Table totes is already in supabase_realtime publication';
+  END;
+END $$;
