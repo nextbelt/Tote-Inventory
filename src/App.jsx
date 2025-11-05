@@ -228,12 +228,20 @@ export default function ToteInventoryApp() {
   };
 
   const handleToteClick = (position, tote) => {
+    console.log('🖱️ Tote clicked:');
+    console.log('🖱️ Position:', position);
+    console.log('🖱️ Tote data:', tote);
+    console.log('🖱️ Tote items:', tote?.items);
+    console.log('🖱️ Items count:', tote?.items?.length || 0);
+    
     if (tote) {
       setSelectedTote(tote);
       setView('toteDetail');
+      console.log('🖱️ Opening tote detail view for:', tote.name);
     } else {
       setShelfPosition(position);
       setView('addTote');
+      console.log('🖱️ Opening add tote form for position:', position);
     }
   };
 
@@ -358,6 +366,15 @@ export default function ToteInventoryApp() {
   }
 
   if (view === 'toteDetail' && selectedTote) {
+    console.log('📋 Tote Detail View Opened:');
+    console.log('📋 Selected tote:', selectedTote);
+    console.log('📋 Tote name:', selectedTote.name);
+    console.log('📋 Tote position:', selectedTote.position);
+    console.log('📋 Tote items:', selectedTote.items);
+    console.log('📋 Items array length:', selectedTote.items?.length || 0);
+    console.log('📋 Items type:', typeof selectedTote.items);
+    console.log('📋 Is items array?', Array.isArray(selectedTote.items));
+    
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 p-2 sm:p-4">
         <div className="max-w-4xl mx-auto">
@@ -401,18 +418,36 @@ export default function ToteInventoryApp() {
                 Items ({selectedTote.items.length})
               </h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
-                {selectedTote.items.map(item => (
-                  <div key={item.id} className="bg-gray-700/30 backdrop-blur-xl border border-gray-600/30 rounded-xl sm:rounded-2xl p-4 sm:p-6 hover:bg-gray-700/40 transition-all duration-300 transform hover:scale-105">
-                    {item.image && (
-                      <img
-                        src={item.image}
-                        alt={item.name}
-                        className="w-full h-32 sm:h-40 md:h-48 object-cover rounded-lg sm:rounded-xl mb-3 sm:mb-4 border border-gray-600/50"
-                      />
-                    )}
-                    <h3 className="font-bold text-white text-base sm:text-lg">{item.name}</h3>
-                  </div>
-                ))}
+                {(() => {
+                  console.log('🎨 Rendering items:', selectedTote.items);
+                  console.log('🎨 Items to render count:', selectedTote.items?.length || 0);
+                  
+                  if (!selectedTote.items || !Array.isArray(selectedTote.items)) {
+                    console.log('⚠️ Items is not an array:', selectedTote.items);
+                    return <div className="text-red-400 p-4">Error: Items data is not valid</div>;
+                  }
+                  
+                  if (selectedTote.items.length === 0) {
+                    console.log('📭 No items to display');
+                    return <div className="text-gray-400 p-4 text-center">No items in this tote yet</div>;
+                  }
+                  
+                  return selectedTote.items.map((item, index) => {
+                    console.log(`🎨 Rendering item ${index}:`, item);
+                    return (
+                      <div key={item.id || index} className="bg-gray-700/30 backdrop-blur-xl border border-gray-600/30 rounded-xl sm:rounded-2xl p-4 sm:p-6 hover:bg-gray-700/40 transition-all duration-300 transform hover:scale-105">
+                        {item.image && (
+                          <img
+                            src={item.image}
+                            alt={item.name}
+                            className="w-full h-32 sm:h-40 md:h-48 object-cover rounded-lg sm:rounded-xl mb-3 sm:mb-4 border border-gray-600/50"
+                          />
+                        )}
+                        <h3 className="font-bold text-white text-base sm:text-lg">{item.name}</h3>
+                      </div>
+                    );
+                  });
+                })()}
               </div>
             </div>
           </div>
