@@ -27,17 +27,34 @@ export default function ToteInventoryApp() {
   const [currentItem, setCurrentItem] = useState({ name: '', image: null });
 
   useEffect(() => {
-    loadData();
-    setupRealtimeSubscription();
+    // Test database connection first, then load data
+    const initializeApp = async () => {
+      console.log('Testing database connection...');
+      const isConnected = await dbService.testConnection();
+      
+      if (isConnected) {
+        console.log('✅ Database connected successfully');
+      } else {
+        console.log('⚠️ Database connection failed, using localStorage');
+      }
+      
+      await loadData();
+      setupRealtimeSubscription();
+    };
+    
+    initializeApp();
   }, []);
 
   const loadData = async () => {
     setLoading(true);
     try {
       const data = await dbService.getTotes();
+      console.log('Loaded totes data:', data); // Debug log
       setTotes(data);
     } catch (error) {
       console.error('Failed to load data:', error);
+      // Show user-friendly error message
+      alert('Unable to load data. Using local storage as backup.');
     } finally {
       setLoading(false);
     }
@@ -98,13 +115,18 @@ export default function ToteInventoryApp() {
       updated_at: new Date().toISOString()
     };
 
+    console.log('Attempting to save tote:', newTote); // Debug log
+
     try {
-      await dbService.saveTote(newTote);
+      const savedTote = await dbService.saveTote(newTote);
+      console.log('Tote saved successfully:', savedTote); // Debug log
       await loadData(); // Refresh data after save
       resetForm();
       setView('grid');
+      alert('Tote saved successfully!'); // Success feedback
     } catch (error) {
       console.error('Failed to save tote:', error);
+      alert('Failed to save tote. Please check your internet connection and try again.');
     }
   };
 
