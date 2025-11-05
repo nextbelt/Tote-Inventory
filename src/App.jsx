@@ -43,6 +43,37 @@ export default function ToteInventoryApp() {
     };
     
     initializeApp();
+
+    // Add debug function to window for testing
+    window.debugTotes = () => {
+      console.log('🔍 DEBUG INFO:');
+      console.log('Current totes state:', totes);
+      console.log('Totes count:', totes.length);
+      console.log('Search term:', searchTerm);
+      console.log('Current view:', view);
+      return { totes, searchTerm, view, totesCount: totes.length };
+    };
+    
+    window.testSave = async () => {
+      console.log('🧪 Testing direct save...');
+      const testTote = {
+        name: 'Test Tote',
+        position: 'A1',
+        items: [{ id: 1, name: 'Test Item' }],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      
+      try {
+        const result = await dbService.saveTote(testTote);
+        console.log('✅ Test save result:', result);
+        await loadData();
+        return result;
+      } catch (error) {
+        console.error('❌ Test save failed:', error);
+        return error;
+      }
+    };
   }, []);
 
   const loadData = async () => {
@@ -52,13 +83,22 @@ export default function ToteInventoryApp() {
       const data = await dbService.getTotes();
       console.log('📊 Raw data from database:', data);
       console.log('📊 Data length:', data?.length || 0);
+      console.log('📊 Data type:', typeof data);
+      console.log('📊 Is array?', Array.isArray(data));
       
-      setTotes(data);
-      console.log('✅ Totes state updated with:', data?.length || 0, 'items');
+      if (data && Array.isArray(data)) {
+        setTotes(data);
+        console.log('✅ Totes state updated with:', data?.length || 0, 'items');
+        console.log('✅ Updated totes state:', data);
+      } else {
+        console.log('⚠️ Invalid data format, setting empty array');
+        setTotes([]);
+      }
     } catch (error) {
       console.error('❌ Failed to load data:', error);
       // Show user-friendly error message
       alert('Unable to load data. Using local storage as backup.');
+      setTotes([]);
     } finally {
       setLoading(false);
       console.log('🏁 Data loading complete');
@@ -407,9 +447,32 @@ export default function ToteInventoryApp() {
             </div>
             
             {/* Black Tote Body with glass morphism - Mobile Responsive */}
-            <div className="relative w-8 h-8 sm:w-12 sm:h-10 md:w-16 md:h-12 bg-gradient-to-br from-gray-700/90 via-gray-800/90 to-gray-900/90 backdrop-blur-xl border border-gray-600/30 shadow-xl">
+            <div className={`relative w-8 h-8 sm:w-12 sm:h-10 md:w-16 md:h-12 bg-gradient-to-br backdrop-blur-xl border shadow-xl transition-all duration-300 ${
+              tote && tote.items && tote.items.length > 0 
+                ? 'from-blue-700/90 via-blue-800/90 to-blue-900/90 border-blue-500/50 shadow-blue-500/30' 
+                : 'from-gray-700/90 via-gray-800/90 to-gray-900/90 border-gray-600/30'
+            }`}>
               {/* Glass effect overlay */}
               <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent"></div>
+              
+              {/* Enhanced visual indicator for items */}
+              {tote && tote.items && tote.items.length > 0 && (
+                <div className="absolute -top-1 -right-1 w-4 h-4 sm:w-5 sm:h-5 md:w-6 md:h-6 bg-gradient-to-r from-green-400 to-emerald-500 rounded-full border-2 border-white shadow-lg flex items-center justify-center z-20">
+                  <span className="text-white text-xs font-bold">{tote.items.length}</span>
+                </div>
+              )}
+              
+              {/* Fullness indicator bars */}
+              {tote && tote.items && tote.items.length > 0 && (
+                <div className="absolute bottom-1 left-1 right-1 flex gap-0.5 z-15">
+                  {Array.from({ length: Math.min(tote.items.length, 4) }).map((_, i) => (
+                    <div key={i} className="flex-1 h-0.5 sm:h-1 bg-gradient-to-r from-green-400 to-emerald-500 rounded-full opacity-80"></div>
+                  ))}
+                  {tote.items.length > 4 && (
+                    <div className="w-1 h-0.5 sm:h-1 bg-gradient-to-r from-yellow-400 to-orange-500 rounded-full"></div>
+                  )}
+                </div>
+              )}
               
               {/* Subtle vertical ridges - Mobile Responsive */}
               <div className="absolute left-0.5 sm:left-1 top-0 h-full w-px bg-gradient-to-b from-gray-500/40 to-gray-700/40"></div>
@@ -417,13 +480,17 @@ export default function ToteInventoryApp() {
               <div className="absolute right-1.5 sm:right-3 top-0 h-full w-px bg-gradient-to-b from-gray-500/30 to-gray-700/30"></div>
               <div className="absolute right-0.5 sm:right-1 top-0 h-full w-px bg-gradient-to-b from-gray-500/40 to-gray-700/40"></div>
               
-              {/* Content indicator - Mobile Responsive */}
+              {/* Content indicator - Enhanced Mobile Responsive */}
               {tote && (
                 <div className="absolute inset-0.5 sm:inset-1 flex flex-col justify-center items-center text-white text-xs overflow-hidden z-10">
                   <div className="font-bold text-center text-xs leading-tight truncate w-full px-0.5 sm:px-1 text-transparent bg-clip-text bg-gradient-to-r from-yellow-200 to-yellow-400">
                     {tote.name.length > 4 ? tote.name.substring(0, 4) + '...' : tote.name}
                   </div>
-                  <div className="text-purple-300 text-xs font-semibold mt-0.5">{tote.items.length}</div>
+                  {tote.items && tote.items.length > 0 && (
+                    <div className="text-green-300 text-xs font-bold mt-0.5 bg-green-900/50 px-1 rounded">
+                      {tote.items.length} items
+                    </div>
+                  )}
                 </div>
               )}
               

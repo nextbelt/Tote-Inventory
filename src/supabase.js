@@ -56,17 +56,33 @@ export const dbService = {
     try {
       console.log('Saving tote to Supabase:', tote);
       
-      // For new totes, don't include the ID (let database generate it)
-      const toteToSave = { ...tote };
-      if (!toteToSave.id || typeof toteToSave.id === 'number') {
-        delete toteToSave.id;
-      }
+      let data, error;
       
-      const { data, error } = await supabase
-        .from('totes')
-        .upsert(toteToSave)
-        .select()
-        .single();
+      // Check if this is an update (has a database-generated ID) or new tote
+      if (tote.id && typeof tote.id !== 'number') {
+        // This is an update - use upsert
+        console.log('Updating existing tote with ID:', tote.id);
+        const result = await supabase
+          .from('totes')
+          .upsert(tote)
+          .select()
+          .single();
+        data = result.data;
+        error = result.error;
+      } else {
+        // This is a new tote - use insert
+        console.log('Inserting new tote');
+        const toteToInsert = { ...tote };
+        delete toteToInsert.id; // Remove the timestamp ID
+        
+        const result = await supabase
+          .from('totes')
+          .insert(toteToInsert)
+          .select()
+          .single();
+        data = result.data;
+        error = result.error;
+      }
       
       if (error) {
         console.error('Supabase save error:', error);
