@@ -1,6 +1,113 @@
+/* Apple-inspired fonts and base styling */
+@import url('https://fonts.googleapis.com/css2?family=SF+Pro+Display:wght@100;200;300;400;500;600;700;800;900&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  /* Apple color palette */
+  --apple-blue: #007AFF;
+  --apple-gray: #8E8E93;
+  --apple-light-gray: #F2F2F7;
+  --apple-dark-gray: #1C1C1E;
+  --apple-medium-gray: #2C2C2E;
+  --apple-green: #34C759;
+  --apple-red: #FF3B30;
+  --apple-orange: #FF9500;
+  --apple-purple: #AF52DE;
+  --apple-pink: #FF2D92;
+  --apple-yellow: #FFCC00;
+  --apple-indigo: #5856D6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  min-height: 100vh;
+}
+
+/* Apple button styles */
+.apple-button {
+  background: var(--apple-blue);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 12px 24px;
+  font-weight: 600;
+  font-size: 17px;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.apple-button:hover {
+  background: #0056CC;
+  transform: translateY(-1px);
+}
+
+.apple-button:active {
+  transform: translateY(0);
+}
+
+/* Apple card styles */
+.apple-card {
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+}
+
+/* Apple input styles */
+.apple-input {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 17px;
+  font-weight: 400;
+  transition: all 0.2s ease;
+}
+
+.apple-input:focus {
+  outline: none;
+  border-color: var(--apple-blue);
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.1);
+}
+
+/* Apple text styles */
+.apple-title {
+  font-size: 48px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: var(--apple-dark-gray);
+}
+
+.apple-subtitle {
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--apple-dark-gray);
+}
+
+.apple-body {
+  font-size: 17px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--apple-gray);
+}
 
 body {
   margin: 0;

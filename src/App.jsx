@@ -225,6 +225,10 @@ export default function ToteInventoryApp() {
     console.log('💾 Form state - items length:', items.length);
     console.log('💾 Form state - items type:', typeof items);
     console.log('💾 Form state - is items array?', Array.isArray(items));
+    console.log('💾 editingTote state:', editingTote);
+    console.log('💾 selectedTote:', selectedTote);
+    console.log('💾 selectedTote.id:', selectedTote?.id);
+    console.log('💾 selectedTote.id type:', typeof selectedTote?.id);
 
     const newTote = {
       id: editingTote ? selectedTote.id : Date.now(),
@@ -237,6 +241,9 @@ export default function ToteInventoryApp() {
 
     console.log('💾 Tote object being saved:', newTote);
     console.log('💾 Tote.items specifically:', newTote.items);
+    console.log('💾 Is this an edit operation?', editingTote);
+    console.log('💾 Tote ID for save:', newTote.id);
+    console.log('💾 Tote ID type:', typeof newTote.id);
 
     try {
       const savedTote = await dbService.saveTote(newTote);
@@ -358,18 +365,18 @@ export default function ToteInventoryApp() {
 
   if (view === 'addTote') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 p-2 sm:p-4">
-        <div className="max-w-2xl mx-auto">
-          <div className="bg-gray-800/50 backdrop-blur-xl border border-gray-700/50 rounded-2xl sm:rounded-3xl shadow-2xl p-4 sm:p-6 md:p-8">
+      <div className="min-h-screen" style={{background: 'linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)'}}>
+        <div className="max-w-2xl mx-auto p-4 sm:p-6">
+          <div className="apple-card p-4 sm:p-6 md:p-8">
             <div className="flex items-center justify-between mb-6 sm:mb-8">
               <button
                 onClick={() => { resetForm(); setView('grid'); }}
-                className="flex items-center text-purple-400 hover:text-purple-300 transition-colors duration-300 group"
+                className="flex items-center text-blue-600 hover:text-blue-700 transition-colors duration-200 group"
               >
-                <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5 mr-1 group-hover:-translate-x-1 transition-transform duration-300" />
-                <span className="text-sm sm:text-base">Back to Grid</span>
+                <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5 mr-1 group-hover:-translate-x-1 transition-transform duration-200" />
+                <span className="text-sm sm:text-base font-medium">Back to Grid</span>
               </button>
-              <h1 className="text-lg sm:text-xl md:text-2xl font-bold bg-gradient-to-r from-purple-400 via-pink-400 to-blue-400 bg-clip-text text-transparent">
+              <h1 className="apple-subtitle text-lg sm:text-xl md:text-2xl">
                 {editingTote ? 'Edit Tote' : 'New Tote'}
               </h1>
               <div className="w-16 sm:w-20 md:w-24"></div>
@@ -377,39 +384,39 @@ export default function ToteInventoryApp() {
 
             <div className="space-y-6 sm:space-y-8">
               <div>
-                <label className="block text-sm font-semibold text-purple-300 mb-2 sm:mb-3">Tote Name</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-2 sm:mb-3">Tote Name</label>
                 <input
                   type="text"
                   value={toteName}
                   onChange={(e) => setToteName(e.target.value)}
                   placeholder="e.g., Holiday Decorations"
-                  className="w-full px-4 sm:px-6 py-3 sm:py-4 bg-gray-700/50 backdrop-blur-xl border border-gray-600/50 rounded-xl sm:rounded-2xl focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500/50 text-white placeholder-gray-400 transition-all duration-300 text-sm sm:text-base"
+                  className="apple-input w-full"
                 />
               </div>
 
               {/* Show selected position (read-only) */}
               <div>
-                <label className="block text-sm font-semibold text-purple-300 mb-2 sm:mb-3">Selected Position</label>
-                <div className="w-full px-4 sm:px-6 py-3 sm:py-4 bg-gray-600/30 backdrop-blur-xl border border-gray-500/30 rounded-xl sm:rounded-2xl text-gray-300 font-semibold text-sm sm:text-base">
+                <label className="block text-sm font-semibold text-gray-700 mb-2 sm:mb-3">Selected Position</label>
+                <div className="w-full px-4 sm:px-6 py-3 sm:py-4 bg-blue-50 border border-blue-200 rounded-xl sm:rounded-2xl text-blue-800 font-semibold text-sm sm:text-base">
                   {shelfPosition || 'No position selected'}
                 </div>
               </div>
 
               <div className="border-t border-gray-700/50 pt-6 sm:pt-8">
-                <h3 className="text-lg sm:text-xl font-bold bg-gradient-to-r from-yellow-400 to-yellow-600 bg-clip-text text-transparent mb-4 sm:mb-6">Add Items</h3>
+                <h3 className="apple-subtitle text-lg sm:text-xl mb-4 sm:mb-6">Add Items</h3>
                 <div className="space-y-4 sm:space-y-6">
                   <input
                     type="text"
                     value={currentItem.name}
                     onChange={(e) => setCurrentItem({ ...currentItem, name: e.target.value })}
                     placeholder="Item name"
-                    className="w-full px-4 sm:px-6 py-3 sm:py-4 bg-gray-700/50 backdrop-blur-xl border border-gray-600/50 rounded-xl sm:rounded-2xl focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500/50 text-white placeholder-gray-400 transition-all duration-300 text-sm sm:text-base"
+                    className="apple-input w-full"
                   />
                   
                   <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
                     <label className="flex-1 cursor-pointer group">
-                      <div className="flex items-center justify-center px-4 sm:px-6 py-3 sm:py-4 border-2 border-dashed border-gray-600/50 rounded-xl sm:rounded-2xl hover:border-purple-500/50 hover:bg-purple-500/10 transition-all duration-300 group-hover:scale-105">
-                        <Camera className="w-4 h-4 sm:w-5 sm:h-5 mr-2 sm:mr-3 text-purple-400 group-hover:text-purple-300" />
+                      <div className="flex items-center justify-center px-4 sm:px-6 py-3 sm:py-4 border-2 border-dashed border-gray-300 rounded-xl sm:rounded-2xl hover:border-blue-500 hover:bg-blue-50 transition-all duration-200 group-hover:scale-105">
+                        <Camera className="w-4 h-4 sm:w-5 sm:h-5 mr-2 sm:mr-3 text-blue-600 group-hover:text-blue-700" />
                         <span className="text-xs sm:text-sm text-gray-300 group-hover:text-white">
                           {currentItem.image ? 'Change Photo' : 'Add Photo'}
                         </span>
@@ -424,7 +431,7 @@ export default function ToteInventoryApp() {
                     <button
                       onClick={addItemToList}
                       disabled={!currentItem.name.trim()}
-                      className="px-6 sm:px-8 py-3 sm:py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl sm:rounded-2xl font-semibold hover:from-purple-700 hover:to-pink-700 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed flex items-center justify-center transition-all duration-300 transform hover:scale-105 text-sm sm:text-base"
+                      className="apple-button px-6 sm:px-8 py-3 sm:py-4 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center text-sm sm:text-base"
                     >
                       <Plus className="w-4 h-4 sm:w-5 sm:h-5 mr-2" />
                       Add
@@ -433,15 +440,15 @@ export default function ToteInventoryApp() {
 
                   {currentItem.image && (
                     <div className="flex justify-center">
-                      <img src={currentItem.image} alt="Preview" className="w-24 h-24 sm:w-32 sm:h-32 object-cover rounded-xl sm:rounded-2xl border border-gray-600/50 shadow-lg" />
+                      <img src={currentItem.image} alt="Preview" className="w-32 h-32 sm:w-40 sm:h-40 object-cover rounded-xl sm:rounded-2xl border border-gray-300 shadow-lg" />
                     </div>
                   )}
                 </div>
               </div>
 
               {items.length > 0 && (
-                <div className="border-t border-gray-700/50 pt-6 sm:pt-8">
-                  <h3 className="text-lg sm:text-xl font-bold text-gray-300 mb-4 sm:mb-6">
+                <div className="border-t border-gray-200 pt-6 sm:pt-8">
+                  <h3 className="apple-subtitle text-lg sm:text-xl mb-4 sm:mb-6">
                     Items ({items.length})
                     {(() => {
                       console.log('📝 Form items list rendering:', items);
@@ -450,14 +457,14 @@ export default function ToteInventoryApp() {
                   </h3>
                   <div className="space-y-3 sm:space-y-4">
                     {items.map(item => (
-                      <div key={item.id} className="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-gray-700/30 backdrop-blur-xl rounded-xl sm:rounded-2xl border border-gray-600/30">
+                      <div key={item.id} className="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-white border border-gray-200 rounded-xl sm:rounded-2xl shadow-sm">
                         {item.image && (
-                          <img src={item.image} alt={item.name} className="w-12 h-12 sm:w-16 sm:h-16 object-cover rounded-lg sm:rounded-xl border border-gray-600/50" />
+                          <img src={item.image} alt={item.name} className="w-16 h-16 sm:w-20 sm:h-20 object-cover rounded-lg sm:rounded-xl border border-gray-300" />
                         )}
-                        <span className="flex-1 font-semibold text-white text-sm sm:text-base">{item.name}</span>
+                        <span className="flex-1 font-semibold text-gray-800 text-sm sm:text-base">{item.name}</span>
                         <button
                           onClick={() => removeItem(item.id)}
-                          className="p-2 sm:p-3 text-red-400 hover:text-red-300 hover:bg-red-500/20 rounded-lg sm:rounded-xl transition-all duration-300"
+                          className="p-2 sm:p-3 text-red-500 hover:text-red-600 hover:bg-red-50 rounded-lg sm:rounded-xl transition-all duration-200"
                         >
                           <X className="w-4 h-4 sm:w-5 sm:h-5" />
                         </button>
@@ -470,7 +477,7 @@ export default function ToteInventoryApp() {
               <button
                 onClick={saveTote}
                 disabled={!toteName.trim() || !shelfPosition}
-                className="w-full py-4 sm:py-5 bg-gradient-to-r from-purple-600 via-pink-600 to-blue-600 text-white rounded-xl sm:rounded-2xl font-bold hover:from-purple-700 hover:via-pink-700 hover:to-blue-700 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed flex items-center justify-center transition-all duration-300 transform hover:scale-105 shadow-lg text-sm sm:text-base"
+                className="apple-button w-full py-4 sm:py-5 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center text-sm sm:text-base"
               >
                 <Save className="w-4 h-4 sm:w-5 sm:h-5 mr-2 sm:mr-3" />
                 {editingTote ? 'Update Tote' : 'Save Tote'}
@@ -493,21 +500,21 @@ export default function ToteInventoryApp() {
     console.log('📋 Is items array?', Array.isArray(selectedTote.items));
     
     return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 p-2 sm:p-4">
-        <div className="max-w-4xl mx-auto">
-          <div className="bg-gray-800/50 backdrop-blur-xl border border-gray-700/50 rounded-2xl sm:rounded-3xl shadow-2xl p-4 sm:p-6 md:p-8">
+      <div className="min-h-screen" style={{background: 'linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)'}}>
+        <div className="max-w-4xl mx-auto p-4 sm:p-6">
+          <div className="apple-card p-4 sm:p-6 md:p-8">
             <div className="flex items-center justify-between mb-6 sm:mb-8">
               <button
                 onClick={() => { setView('grid'); setSelectedTote(null); }}
-                className="flex items-center text-purple-400 hover:text-purple-300 transition-colors duration-300 group"
+                className="flex items-center text-blue-600 hover:text-blue-700 transition-colors duration-200 group"
               >
-                <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5 mr-1 group-hover:-translate-x-1 transition-transform duration-300" />
-                <span className="text-sm sm:text-base">Back to Grid</span>
+                <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5 mr-1 group-hover:-translate-x-1 transition-transform duration-200" />
+                <span className="text-sm sm:text-base font-medium">Back to Grid</span>
               </button>
               <div className="flex gap-2 sm:gap-3">
                 <button
                   onClick={() => editTote(selectedTote)}
-                  className="p-2 sm:p-3 text-purple-400 hover:text-purple-300 hover:bg-purple-500/20 rounded-lg sm:rounded-xl transition-all duration-300"
+                  className="p-2 sm:p-3 text-blue-600 hover:text-blue-700 hover:bg-blue-100 rounded-lg sm:rounded-xl transition-all duration-200"
                 >
                   <Edit2 className="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
@@ -521,17 +528,17 @@ export default function ToteInventoryApp() {
             </div>
 
             <div className="mb-6 sm:mb-8">
-              <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold bg-gradient-to-r from-purple-400 via-pink-400 to-blue-400 bg-clip-text text-transparent mb-2 sm:mb-3">
+              <h1 className="apple-title text-2xl sm:text-3xl md:text-4xl mb-2 sm:mb-3">
                 {selectedTote.name}
               </h1>
-              <div className="inline-flex items-center text-yellow-400 font-semibold bg-gray-700/30 px-3 sm:px-4 py-2 rounded-full border border-gray-600/30 text-sm sm:text-base">
+              <div className="inline-flex items-center text-blue-600 font-semibold bg-blue-50 px-3 sm:px-4 py-2 rounded-full border border-blue-200 text-sm sm:text-base">
                 <MapPin className="w-4 h-4 sm:w-5 sm:h-5 mr-1 sm:mr-2" />
                 Position: {selectedTote.position}
               </div>
             </div>
 
-            <div className="border-t border-gray-700/50 pt-6 sm:pt-8">
-              <h2 className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-yellow-400 to-yellow-600 bg-clip-text text-transparent mb-4 sm:mb-6">
+            <div className="border-t border-gray-200 pt-6 sm:pt-8">
+              <h2 className="apple-subtitle text-xl sm:text-2xl mb-4 sm:mb-6">
                 Items ({selectedTote.items.length})
               </h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
@@ -552,15 +559,15 @@ export default function ToteInventoryApp() {
                   return selectedTote.items.map((item, index) => {
                     console.log(`🎨 Rendering item ${index}:`, item);
                     return (
-                      <div key={item.id || index} className="bg-gray-700/30 backdrop-blur-xl border border-gray-600/30 rounded-xl sm:rounded-2xl p-4 sm:p-6 hover:bg-gray-700/40 transition-all duration-300 transform hover:scale-105">
+                      <div key={item.id || index} className="bg-white border border-gray-200 rounded-xl sm:rounded-2xl p-4 sm:p-6 hover:bg-gray-50 transition-all duration-200 shadow-sm">
                         {item.image && (
                           <img
                             src={item.image}
                             alt={item.name}
-                            className="w-full h-32 sm:h-40 md:h-48 object-cover rounded-lg sm:rounded-xl mb-3 sm:mb-4 border border-gray-600/50"
+                            className="w-full h-48 sm:h-56 md:h-64 object-cover rounded-lg sm:rounded-xl mb-3 sm:mb-4 border border-gray-300"
                           />
                         )}
-                        <h3 className="font-bold text-white text-base sm:text-lg">{item.name}</h3>
+                        <h3 className="font-bold text-gray-800 text-base sm:text-lg">{item.name}</h3>
                       </div>
                     );
                   });
@@ -579,7 +586,7 @@ export default function ToteInventoryApp() {
   const ToteCard = ({ position, tote, onClick }) => {
     return (
       <div className="flex flex-col items-center p-1 sm:p-2">
-        <div className="text-xs font-semibold text-purple-300 mb-1 sm:mb-2">{position}</div>
+        <div className="text-xs font-semibold text-blue-600 mb-1 sm:mb-2">{position}</div>
         <div
           onClick={onClick}
           className="relative cursor-pointer transform hover:scale-110 transition-all duration-300 hover:shadow-2xl group"
@@ -587,15 +594,15 @@ export default function ToteInventoryApp() {
           {/* Tote with Railway-inspired design - Mobile Responsive */}
           <div className="relative">
             {/* Glowing effect */}
-            <div className="absolute inset-0 bg-gradient-to-r from-purple-400 via-pink-400 to-indigo-400 rounded-lg opacity-0 group-hover:opacity-20 blur-xl transition-opacity duration-300"></div>
+            <div className="absolute inset-0 bg-gradient-to-r from-blue-400 via-blue-500 to-indigo-400 rounded-lg opacity-0 group-hover:opacity-20 blur-xl transition-opacity duration-200"></div>
             
-            {/* Yellow Lid with glass effect - Mobile Responsive */}
-            <div className="relative w-8 h-2 sm:w-12 sm:h-2.5 md:w-16 md:h-3 bg-gradient-to-br from-yellow-200 via-yellow-400 to-yellow-600 rounded-t-lg border border-yellow-500/30 shadow-lg backdrop-blur-sm">
+            {/* Gray Lid with glass effect - Apple Style */}
+            <div className="relative w-8 h-2 sm:w-12 sm:h-2.5 md:w-16 md:h-3 bg-gradient-to-br from-gray-200 via-gray-300 to-gray-400 rounded-t-lg border border-gray-400/30 shadow-lg backdrop-blur-sm">
               {/* Glass shine effect */}
               <div className="absolute inset-0 bg-gradient-to-br from-white/40 to-transparent rounded-t-lg"></div>
               {/* Lid handle indentations - Mobile Responsive */}
-              <div className="absolute left-1 sm:left-1.5 md:left-2 top-0.5 w-1.5 sm:w-2 md:w-3 h-1 sm:h-1 md:h-1.5 bg-yellow-600/60 rounded-sm backdrop-blur-sm"></div>
-              <div className="absolute right-1 sm:right-1.5 md:right-2 top-0.5 w-1.5 sm:w-2 md:w-3 h-1 sm:h-1 md:h-1.5 bg-yellow-600/60 rounded-sm backdrop-blur-sm"></div>
+              <div className="absolute left-1 sm:left-1.5 md:left-2 top-0.5 w-1.5 sm:w-2 md:w-3 h-1 sm:h-1 md:h-1.5 bg-gray-500/60 rounded-sm backdrop-blur-sm"></div>
+              <div className="absolute right-1 sm:right-1.5 md:right-2 top-0.5 w-1.5 sm:w-2 md:w-3 h-1 sm:h-1 md:h-1.5 bg-gray-500/60 rounded-sm backdrop-blur-sm"></div>
             </div>
             
             {/* Black Tote Body with glass morphism - Mobile Responsive */}
@@ -609,7 +616,7 @@ export default function ToteInventoryApp() {
               
               {/* Enhanced visual indicator for items */}
               {tote && tote.items && tote.items.length > 0 && (
-                <div className="absolute -top-1 -right-1 w-4 h-4 sm:w-5 sm:h-5 md:w-6 md:h-6 bg-gradient-to-r from-green-400 to-emerald-500 rounded-full border-2 border-white shadow-lg flex items-center justify-center z-20">
+                <div className="absolute -top-1 -right-1 w-4 h-4 sm:w-5 sm:h-5 md:w-6 md:h-6 bg-gradient-to-r from-blue-500 to-blue-600 rounded-full border-2 border-white shadow-lg flex items-center justify-center z-20">
                   <span className="text-white text-xs font-bold">{tote.items.length}</span>
                 </div>
               )}
@@ -618,10 +625,10 @@ export default function ToteInventoryApp() {
               {tote && tote.items && tote.items.length > 0 && (
                 <div className="absolute bottom-1 left-1 right-1 flex gap-0.5 z-15">
                   {Array.from({ length: Math.min(tote.items.length, 4) }).map((_, i) => (
-                    <div key={i} className="flex-1 h-0.5 sm:h-1 bg-gradient-to-r from-green-400 to-emerald-500 rounded-full opacity-80"></div>
+                    <div key={i} className="flex-1 h-0.5 sm:h-1 bg-gradient-to-r from-blue-500 to-blue-600 rounded-full opacity-80"></div>
                   ))}
                   {tote.items.length > 4 && (
-                    <div className="w-1 h-0.5 sm:h-1 bg-gradient-to-r from-yellow-400 to-orange-500 rounded-full"></div>
+                    <div className="w-1 h-0.5 sm:h-1 bg-gradient-to-r from-orange-500 to-red-500 rounded-full"></div>
                   )}
                 </div>
               )}
@@ -635,11 +642,11 @@ export default function ToteInventoryApp() {
               {/* Content indicator - Enhanced Mobile Responsive */}
               {tote && (
                 <div className="absolute inset-0.5 sm:inset-1 flex flex-col justify-center items-center text-white text-xs overflow-hidden z-10">
-                  <div className="font-bold text-center text-xs leading-tight truncate w-full px-0.5 sm:px-1 text-transparent bg-clip-text bg-gradient-to-r from-yellow-200 to-yellow-400">
+                  <div className="font-bold text-center text-xs leading-tight truncate w-full px-0.5 sm:px-1 text-white">
                     {tote.name.length > 4 ? tote.name.substring(0, 4) + '...' : tote.name}
                   </div>
                   {tote.items && tote.items.length > 0 && (
-                    <div className="text-green-300 text-xs font-bold mt-0.5 bg-green-900/50 px-1 rounded">
+                    <div className="text-blue-600 text-xs font-bold mt-0.5 bg-blue-100 px-1 rounded">
                       {tote.items.length} items
                     </div>
                   )}
@@ -648,7 +655,7 @@ export default function ToteInventoryApp() {
               
               {!tote && (
                 <div className="absolute inset-0 flex items-center justify-center z-10">
-                  <Plus className="w-2 h-2 sm:w-3 sm:h-3 md:w-4 md:h-4 text-purple-400 opacity-60 group-hover:opacity-100 transition-opacity duration-300" />
+                  <Plus className="w-2 h-2 sm:w-3 sm:h-3 md:w-4 md:h-4 text-white opacity-60 group-hover:opacity-100 transition-opacity duration-200" />
                 </div>
               )}
             </div>
@@ -657,7 +664,7 @@ export default function ToteInventoryApp() {
             <div className="w-8 sm:w-12 md:w-16 h-0.5 sm:h-1 bg-gradient-to-r from-gray-700 via-gray-800 to-gray-700 rounded-b-sm shadow-lg"></div>
             
             {/* Hover glow effect */}
-            <div className="absolute inset-0 rounded-lg bg-gradient-to-r from-purple-500/0 via-pink-500/0 to-blue-500/0 group-hover:from-purple-500/20 group-hover:via-pink-500/20 group-hover:to-blue-500/20 transition-all duration-300 pointer-events-none"></div>
+            <div className="absolute inset-0 rounded-lg bg-gradient-to-r from-blue-500/0 via-blue-600/0 to-indigo-500/0 group-hover:from-blue-500/20 group-hover:via-blue-600/20 group-hover:to-indigo-500/20 transition-all duration-200 pointer-events-none"></div>
           </div>
         </div>
       </div>
@@ -665,28 +672,28 @@ export default function ToteInventoryApp() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 p-2 sm:p-4">
-      <div className="max-w-7xl mx-auto">
-        {/* Header with Railway styling */}
-        <div className="bg-gray-800/50 backdrop-blur-xl border border-gray-700/50 rounded-2xl sm:rounded-3xl shadow-2xl p-4 sm:p-6 md:p-8 mb-4 sm:mb-6 md:mb-8">
+    <div className="min-h-screen" style={{background: 'linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)'}}>
+      <div className="max-w-7xl mx-auto p-4 sm:p-6">
+        {/* Header with Apple styling */}
+        <div className="apple-card p-4 sm:p-6 md:p-8 mb-4 sm:mb-6 md:mb-8">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 sm:gap-6 mb-4 sm:mb-6 md:mb-8">
-            <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold bg-gradient-to-r from-purple-400 via-pink-400 to-blue-400 bg-clip-text text-transparent flex items-center">
-              <div className="w-8 h-8 sm:w-10 sm:h-10 mr-3 sm:mr-4 bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl flex items-center justify-center">
+            <h1 className="apple-title text-2xl sm:text-3xl md:text-4xl flex items-center">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 mr-3 sm:mr-4 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-xl flex items-center justify-center">
                 <Package className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
               </div>
               Tote Inventory
             </h1>
             <div className="flex items-center gap-2 sm:gap-3">
-              <div className="text-xs sm:text-sm text-gray-300 bg-gray-700/50 px-3 sm:px-4 py-2 rounded-full border border-gray-600/50 flex items-center gap-2">
-                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                <span className="text-purple-400 font-semibold">{totes.length}</span>
-                <span className="text-gray-400 hidden sm:inline">/26 totes • Cloud Sync Active</span>
-                <span className="text-gray-400 sm:hidden">/{totes.length} totes</span>
+              <div className="text-xs sm:text-sm text-gray-600 bg-blue-50 px-3 sm:px-4 py-2 rounded-full border border-blue-200 flex items-center gap-2">
+                <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                <span className="text-blue-600 font-semibold">{totes.length}</span>
+                <span className="text-gray-600 hidden sm:inline">of 26 positions • Synced</span>
+                <span className="text-gray-600 sm:hidden">totes</span>
               </div>
               <button
                 onClick={loadData}
                 disabled={loading}
-                className="p-2 text-purple-400 hover:text-purple-300 hover:bg-purple-500/20 rounded-lg transition-all duration-300 disabled:opacity-50"
+                className="p-2 text-blue-600 hover:text-blue-700 hover:bg-blue-100 rounded-lg transition-all duration-200 disabled:opacity-50"
                 title="Refresh data"
               >
                 <svg className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -697,24 +704,24 @@ export default function ToteInventoryApp() {
           </div>
 
           <div className="relative">
-            <Search className="absolute left-3 sm:left-4 top-1/2 transform -translate-y-1/2 text-purple-400 w-4 h-4 sm:w-5 sm:h-5" />
+            <Search className="absolute left-3 sm:left-4 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4 sm:w-5 sm:h-5" />
             <input
               type="text"
               placeholder="Search totes, positions, or items..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 sm:pl-12 pr-4 sm:pr-6 py-3 sm:py-4 bg-gray-700/50 backdrop-blur-xl border border-gray-600/50 rounded-xl sm:rounded-2xl focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500/50 text-white placeholder-gray-400 transition-all duration-300 text-sm sm:text-base"
+              className="apple-input w-full pl-10 sm:pl-12"
             />
           </div>
         </div>
 
-        {/* All Totes Dashboard with Railway styling */}
-        <div className="bg-gray-800/50 backdrop-blur-xl border border-gray-700/50 rounded-2xl sm:rounded-3xl shadow-2xl p-4 sm:p-6 md:p-8">
+        {/* All Totes Dashboard with Apple styling */}
+        <div className="apple-card p-4 sm:p-6 md:p-8">
           <div className="text-center mb-4 sm:mb-6 md:mb-8">
-            <h2 className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-yellow-400 to-yellow-600 bg-clip-text text-transparent mb-2">
+            <h2 className="apple-subtitle mb-2">
               Storage Grid
             </h2>
-            <div className="w-16 sm:w-20 h-1 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full mx-auto"></div>
+            <div className="w-16 sm:w-20 h-1 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full mx-auto"></div>
           </div>
           
           {/* Custom layout with Railway glass morphism - Mobile Optimized */}
@@ -847,13 +854,13 @@ export default function ToteInventoryApp() {
 
           {/* Column labels with Railway styling - Mobile Optimized */}
           <div className="mt-4 sm:mt-6 md:mt-8 flex justify-center gap-2 sm:gap-4 md:gap-6 text-xs sm:text-sm font-bold">
-            <div className="w-12 sm:w-16 md:w-20 text-center text-purple-400">A</div>
-            <div className="w-12 sm:w-16 md:w-20 text-center text-purple-400">B</div>
+            <div className="w-12 sm:w-16 md:w-20 text-center text-blue-600">A</div>
+            <div className="w-12 sm:w-16 md:w-20 text-center text-blue-600">B</div>
             <div className="w-12 sm:w-16 md:w-20 text-center text-gray-500">C</div>
             <div className="w-12 sm:w-16 md:w-20 text-center text-gray-500">D</div>
             <div className="w-12 sm:w-16 md:w-20 text-center text-gray-500">E</div>
-            <div className="w-12 sm:w-16 md:w-20 text-center text-purple-400">F</div>
-            <div className="w-12 sm:w-16 md:w-20 text-center text-purple-400">G</div>
+            <div className="w-12 sm:w-16 md:w-20 text-center text-blue-600">F</div>
+            <div className="w-12 sm:w-16 md:w-20 text-center text-blue-600">G</div>
           </div>
 
           {/* Position breakdown with Railway styling */}
@@ -869,33 +876,33 @@ export default function ToteInventoryApp() {
           </div>
         </div>
 
-        {/* Legend with Railway styling - Mobile Optimized */}
-        <div className="bg-gray-800/50 backdrop-blur-xl border border-gray-700/50 rounded-2xl sm:rounded-3xl shadow-2xl p-4 sm:p-6 mt-4 sm:mt-6 md:mt-8">
-          <h3 className="text-lg sm:text-xl font-bold bg-gradient-to-r from-yellow-400 to-yellow-600 bg-clip-text text-transparent mb-4 sm:mb-6 text-center">
+        {/* Legend with Apple styling - Mobile Optimized */}
+        <div className="apple-card p-4 sm:p-6 mt-4 sm:mt-6 md:mt-8">
+          <h3 className="apple-subtitle text-lg sm:text-xl mb-4 sm:mb-6 text-center">
             Quick Guide
           </h3>
           <div className="flex gap-4 sm:gap-8 flex-wrap justify-center">
-            <div className="flex items-center gap-2 sm:gap-3 bg-gray-700/30 p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-gray-600/30">
+            <div className="flex items-center gap-2 sm:gap-3 bg-white border border-gray-200 p-3 sm:p-4 rounded-xl sm:rounded-2xl shadow-sm">
               <div className="flex flex-col items-center">
-                <div className="w-8 sm:w-10 md:w-12 h-1.5 sm:h-2 bg-gradient-to-br from-yellow-300 to-yellow-500 rounded-t border border-yellow-500/30"></div>
+                <div className="w-8 sm:w-10 md:w-12 h-1.5 sm:h-2 bg-gradient-to-br from-gray-200 via-gray-300 to-gray-400 rounded-t border border-gray-400/30"></div>
                 <div className="w-8 sm:w-10 md:w-12 h-6 sm:h-7 md:h-8 bg-gradient-to-br from-gray-700/90 to-gray-900/90 border border-gray-600/30 backdrop-blur-xl flex items-center justify-center relative">
                   <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent"></div>
-                  <div className="text-purple-300 text-xs sm:text-sm font-bold z-10">Items</div>
+                  <div className="text-white text-xs sm:text-sm font-bold z-10">Items</div>
                 </div>
                 <div className="w-8 sm:w-10 md:w-12 h-0.5 bg-gray-700"></div>
               </div>
-              <span className="text-xs sm:text-sm text-gray-300 font-medium">Occupied Tote</span>
+              <span className="text-xs sm:text-sm text-gray-600 font-medium">Occupied Tote</span>
             </div>
-            <div className="flex items-center gap-2 sm:gap-3 bg-gray-700/30 p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-gray-600/30">
+            <div className="flex items-center gap-2 sm:gap-3 bg-white border border-gray-200 p-3 sm:p-4 rounded-xl sm:rounded-2xl shadow-sm">
               <div className="flex flex-col items-center">
-                <div className="w-8 sm:w-10 md:w-12 h-1.5 sm:h-2 bg-gradient-to-br from-yellow-300 to-yellow-500 rounded-t border border-yellow-500/30"></div>
+                <div className="w-8 sm:w-10 md:w-12 h-1.5 sm:h-2 bg-gradient-to-br from-gray-200 via-gray-300 to-gray-400 rounded-t border border-gray-400/30"></div>
                 <div className="w-8 sm:w-10 md:w-12 h-6 sm:h-7 md:h-8 bg-gradient-to-br from-gray-700/90 to-gray-900/90 border border-gray-600/30 backdrop-blur-xl flex items-center justify-center relative">
                   <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent"></div>
-                  <Plus className="w-2 sm:w-2.5 md:w-3 h-2 sm:h-2.5 md:h-3 text-purple-400 z-10" />
+                  <Plus className="w-2 sm:w-2.5 md:w-3 h-2 sm:h-2.5 md:h-3 text-white z-10" />
                 </div>
                 <div className="w-8 sm:w-10 md:w-12 h-0.5 bg-gray-700"></div>
               </div>
-              <span className="text-xs sm:text-sm text-gray-300 font-medium">Empty Position</span>
+              <span className="text-xs sm:text-sm text-gray-600 font-medium">Empty Position</span>
             </div>
           </div>
         </div>

@@ -54,24 +54,39 @@ export const dbService = {
   // Save a tote
   async saveTote(tote) {
     try {
-      console.log('Saving tote to Supabase:', tote);
+      console.log('🚀 Saving tote to Supabase:', tote);
+      console.log('🔍 Tote ID type:', typeof tote.id);
+      console.log('🔍 Tote ID value:', tote.id);
       
       let data, error;
       
-      // Check if this is an update (has a database-generated ID) or new tote
-      if (tote.id && typeof tote.id !== 'number') {
+      // Better detection: check if tote has an ID that looks like it came from database
+      // Database IDs are either strings or large numbers (auto-generated)
+      // New totes have Date.now() IDs or no ID
+      const isExistingTote = tote.id && (
+        typeof tote.id === 'string' || 
+        (typeof tote.id === 'number' && tote.id > 1000000000000) // Database auto-generated IDs are large
+      );
+      
+      if (isExistingTote) {
         // This is an update - use upsert
-        console.log('Updating existing tote with ID:', tote.id);
+        console.log('📝 Updating existing tote with ID:', tote.id);
+        
+        // Ensure items is properly formatted for JSONB
+        const toteToUpdate = { ...tote };
+        toteToUpdate.items = Array.isArray(tote.items) ? tote.items : [];
+        console.log('📝 Tote data for update:', toteToUpdate);
+        
         const result = await supabase
           .from('totes')
-          .upsert(tote)
+          .upsert(toteToUpdate)
           .select()
           .single();
         data = result.data;
         error = result.error;
       } else {
         // This is a new tote - use insert
-        console.log('Inserting new tote');
+        console.log('➕ Inserting new tote');
         const toteToInsert = { ...tote };
         delete toteToInsert.id; // Remove the timestamp ID
         
