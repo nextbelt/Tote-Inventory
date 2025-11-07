@@ -15,6 +15,7 @@ const SHELF_POSITIONS = [
 export default function ToteInventoryApp() {
   const [totes, setTotes] = useState([]);
   const [view, setView] = useState('grid'); // grid, addTote, toteDetail
+  const [activeTab, setActiveTab] = useState('visual'); // visual, table
   const [selectedTote, setSelectedTote] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [editingTote, setEditingTote] = useState(false);
@@ -581,6 +582,35 @@ export default function ToteInventoryApp() {
   }
 
   const grouped = getTotesByPosition();
+  const filteredTotes = totes.filter(tote => {
+    if (!searchTerm) return true;
+    const search = searchTerm.toLowerCase();
+    return (
+      tote.name.toLowerCase().includes(search) ||
+      tote.position.toLowerCase().includes(search) ||
+      (tote.items && tote.items.some(item => item.name.toLowerCase().includes(search)))
+    );
+  });
+
+  // Get unique totes by position (most recent only) for table view
+  const uniqueTotes = filteredTotes.reduce((acc, tote) => {
+    const existingIndex = acc.findIndex(t => t.position === tote.position);
+    if (existingIndex === -1) {
+      acc.push(tote);
+    } else {
+      // Keep the most recently updated tote
+      if (new Date(tote.updated_at) > new Date(acc[existingIndex].updated_at)) {
+        acc[existingIndex] = tote;
+      }
+    }
+    return acc;
+  }, []).sort((a, b) => {
+    // Sort by position (A1, A2, ... G5)
+    const posA = a.position;
+    const posB = b.position;
+    if (posA[0] !== posB[0]) return posA[0].localeCompare(posB[0]);
+    return parseInt(posA.slice(1)) - parseInt(posB.slice(1));
+  });
 
   // Component for individual tote visualization - Railway style with Mobile Optimization
   const ToteCard = ({ position, tote, onClick }) => {
@@ -715,17 +745,99 @@ export default function ToteInventoryApp() {
           </div>
         </div>
 
+        {/* Tab Navigation */}
+        <div className="apple-card p-2 mb-4 sm:mb-6">
+          <div className="flex bg-gray-100 rounded-lg p-1">
+            <button
+              onClick={() => setActiveTab('visual')}
+              className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all duration-200 ${
+                activeTab === 'visual' 
+                  ? 'bg-white text-blue-600 shadow-sm' 
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              Visual Grid
+            </button>
+            <button
+              onClick={() => setActiveTab('table')}
+              className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all duration-200 ${
+                activeTab === 'table' 
+                  ? 'bg-white text-blue-600 shadow-sm' 
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              Table View
+            </button>
+          </div>
+        </div>
+
         {/* All Totes Dashboard with Apple styling */}
         <div className="apple-card p-4 sm:p-6 md:p-8">
-          <div className="text-center mb-4 sm:mb-6 md:mb-8">
-            <h2 className="apple-subtitle mb-2">
-              Storage Grid
-            </h2>
-            <div className="w-16 sm:w-20 h-1 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full mx-auto"></div>
+          {activeTab === 'visual' && (
+            <div className="text-center mb-4 sm:mb-6 md:mb-8">
+              <h2 className="apple-subtitle mb-2">
+                Storage Grid
+              </h2>
+              <div className="w-16 sm:w-20 h-1 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full mx-auto"></div>
+            </div>
+          )}
+
+          {activeTab === 'table' && (
+            <div className="text-center mb-4 sm:mb-6 md:mb-8">
+              <h2 className="apple-subtitle mb-2">
+                Tote Inventory Table
+              </h2>
+              <div className="w-16 sm:w-20 h-1 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full mx-auto"></div>
+            </div>
+          )}
+
+        {activeTab === 'table' && (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="border-b border-gray-200">
+                  <th className="text-left py-3 px-4 font-semibold text-gray-700">Position</th>
+                  <th className="text-left py-3 px-4 font-semibold text-gray-700">Tote Name</th>
+                  <th className="text-left py-3 px-4 font-semibold text-gray-700">Items</th>
+                  <th className="text-left py-3 px-4 font-semibold text-gray-700">Count</th>
+                </tr>
+              </thead>
+              <tbody>
+                {uniqueTotes.map(tote => (
+                  <tr key={tote.id} className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => handleToteClick(tote.position, tote)}>
+                    <td className="py-3 px-4 font-medium text-blue-600">{tote.position}</td>
+                    <td className="py-3 px-4">{tote.name}</td>
+                    <td className="py-3 px-4">
+                      {tote.items && tote.items.length > 0 ? (
+                        <div className="text-sm text-gray-600">
+                          {tote.items.slice(0, 3).map(item => item.name).join(', ')}
+                          {tote.items.length > 3 && ` +${tote.items.length - 3} more`}
+                        </div>
+                      ) : (
+                        <span className="text-gray-400 text-sm">No items</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm">
+                        {tote.items ? tote.items.length : 0}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+                {uniqueTotes.length === 0 && (
+                  <tr>
+                    <td colSpan="4" className="py-8 px-4 text-center text-gray-500">
+                      {searchTerm ? 'No totes match your search' : 'No totes created yet'}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
-          
-          {/* Custom layout with Railway glass morphism - Mobile Optimized */}
-          <div className="space-y-3 sm:space-y-4 md:space-y-6">
+        )}
+
+        {activeTab === 'visual' && (
+        <div className="space-y-3 sm:space-y-4 md:space-y-6">
             {/* Row 1: A1, B1, [empty], [empty], [empty], F1, G1 */}
             <div className="flex justify-center gap-2 sm:gap-4 md:gap-6">
               <div className="w-12 sm:w-16 md:w-20 flex justify-center">
@@ -850,7 +962,6 @@ export default function ToteInventoryApp() {
                 <ToteCard position="G5" tote={grouped["G5"]?.[0]} onClick={() => handleToteClick("G5", grouped["G5"]?.[0])} />
               </div>
             </div>
-          </div>
 
           {/* Column labels with Railway styling - Mobile Optimized */}
           <div className="mt-4 sm:mt-6 md:mt-8 flex justify-center gap-2 sm:gap-4 md:gap-6 text-xs sm:text-sm font-bold">
@@ -874,6 +985,8 @@ export default function ToteInventoryApp() {
               </div>
             </div>
           </div>
+        </div>
+        )}
         </div>
 
         {/* Legend with Apple styling - Mobile Optimized */}
