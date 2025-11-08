@@ -338,11 +338,18 @@ export default function ToteInventoryApp() {
     
     const grouped = {};
     filtered.forEach(tote => {
-      if (!grouped[tote.position]) grouped[tote.position] = [];
-      grouped[tote.position].push(tote);
+      // Only keep the most recently updated tote per position
+      if (!grouped[tote.position]) {
+        grouped[tote.position] = [tote];
+      } else {
+        // If this tote is more recent, replace the existing one
+        if (new Date(tote.updated_at) > new Date(grouped[tote.position][0].updated_at)) {
+          grouped[tote.position] = [tote];
+        }
+      }
     });
     
-    console.log('🗂️ Grouped by position:', grouped);
+    console.log('🗂️ Grouped by position (most recent only):', grouped);
     return grouped;
   };
 
