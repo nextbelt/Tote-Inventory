@@ -34,3 +34,8 @@ Thumbs.db
 # Cache
 .cache/
 .parcel-cache/
+
+# Images dropped in project root
+*.jpeg
+*.jpg
+*.png
