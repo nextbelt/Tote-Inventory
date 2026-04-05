@@ -72,6 +72,7 @@ export function ToteProvider({ children }) {
   return <ToteContext.Provider value={value}>{children}</ToteContext.Provider>;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useTotes() {
   const ctx = useContext(ToteContext);
   if (!ctx) throw new Error("useTotes must be used within a ToteProvider");
