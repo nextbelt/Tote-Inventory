@@ -18,15 +18,15 @@ export default function ToteCard({ position, tote, onClick }) {
           <div className="absolute inset-0 bg-gradient-to-r from-blue-400 via-blue-500 to-indigo-400 rounded-lg opacity-0 group-hover:opacity-20 blur-xl transition-opacity duration-200" />
 
           {/* Lid */}
-          <div className="relative w-8 h-2 sm:w-12 sm:h-2.5 md:w-16 md:h-3 bg-gradient-to-br from-gray-200 via-gray-300 to-gray-400 rounded-t-lg border border-gray-400/30 shadow-lg backdrop-blur-sm">
+          <div className="relative w-14 h-2 sm:w-20 sm:h-2.5 md:w-28 md:h-3 bg-gradient-to-br from-gray-200 via-gray-300 to-gray-400 rounded-t-lg border border-gray-400/30 shadow-lg backdrop-blur-sm">
             <div className="absolute inset-0 bg-gradient-to-br from-white/40 to-transparent rounded-t-lg" />
-            <div className="absolute left-1 sm:left-1.5 md:left-2 top-0.5 w-1.5 sm:w-2 md:w-3 h-1 md:h-1.5 bg-gray-500/60 rounded-sm" />
-            <div className="absolute right-1 sm:right-1.5 md:right-2 top-0.5 w-1.5 sm:w-2 md:w-3 h-1 md:h-1.5 bg-gray-500/60 rounded-sm" />
+            <div className="absolute left-1.5 sm:left-2 md:left-3 top-0.5 w-2 sm:w-3 md:w-4 h-1 md:h-1.5 bg-gray-500/60 rounded-sm" />
+            <div className="absolute right-1.5 sm:right-2 md:right-3 top-0.5 w-2 sm:w-3 md:w-4 h-1 md:h-1.5 bg-gray-500/60 rounded-sm" />
           </div>
 
           {/* Body */}
           <div
-            className={`relative w-8 h-8 sm:w-12 sm:h-10 md:w-16 md:h-12 bg-gradient-to-br backdrop-blur-xl border shadow-xl transition-all duration-300 ${
+            className={`relative w-14 h-6 sm:w-20 sm:h-8 md:w-28 md:h-10 bg-gradient-to-br backdrop-blur-xl border shadow-xl transition-all duration-300 ${
               hasItems
                 ? "from-blue-700/90 via-blue-800/90 to-blue-900/90 border-blue-500/50 shadow-blue-500/30"
                 : "from-gray-700/90 via-gray-800/90 to-gray-900/90 border-gray-600/30"
@@ -68,8 +68,8 @@ export default function ToteCard({ position, tote, onClick }) {
             {tote ? (
               <div className="absolute inset-0.5 sm:inset-1 flex flex-col justify-center items-center text-white text-xs overflow-hidden z-10">
                 <div className="font-bold text-center text-xs leading-tight truncate w-full px-0.5 sm:px-1">
-                  {tote.name.length > 4
-                    ? tote.name.substring(0, 4) + "…"
+                  {tote.name.length > 8
+                    ? tote.name.substring(0, 8) + "…"
                     : tote.name}
                 </div>
                 {hasItems && (
@@ -86,7 +86,7 @@ export default function ToteCard({ position, tote, onClick }) {
           </div>
 
           {/* Bottom rim */}
-          <div className="w-8 sm:w-12 md:w-16 h-0.5 sm:h-1 bg-gradient-to-r from-gray-700 via-gray-800 to-gray-700 rounded-b-sm shadow-lg" />
+          <div className="w-14 sm:w-20 md:w-28 h-0.5 sm:h-1 bg-gradient-to-r from-gray-700 via-gray-800 to-gray-700 rounded-b-sm shadow-lg" />
 
           {/* Hover glow overlay */}
           <div className="absolute inset-0 rounded-lg bg-gradient-to-r from-blue-500/0 via-blue-600/0 to-indigo-500/0 group-hover:from-blue-500/20 group-hover:via-blue-600/20 group-hover:to-indigo-500/20 transition-all duration-200 pointer-events-none" />

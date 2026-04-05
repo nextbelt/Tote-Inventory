@@ -75,7 +75,10 @@ export async function migrateLocalToSupabase() {
     );
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.warn("localStorage → Supabase migration failed, will retry next load:", err);
+    console.warn(
+      "localStorage → Supabase migration failed, will retry next load:",
+      err
+    );
     // Don't mark as done — will retry on next page load
   }
 }

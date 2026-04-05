@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { toteService, migrateLocalToSupabase } from "../services/toteService";
+import { migrateLocalToSupabase, toteService } from "../services/toteService";
 
 const ToteContext = createContext(null);
 

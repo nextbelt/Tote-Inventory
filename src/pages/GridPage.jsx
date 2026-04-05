@@ -141,7 +141,7 @@ export default function GridPage({ onSelectTote, onAddTote }) {
                     {row.map((pos, colIdx) => (
                       <div
                         key={colIdx}
-                        className="w-12 sm:w-16 md:w-20 flex justify-center"
+                        className="w-16 sm:w-24 md:w-32 flex justify-center"
                       >
                         {pos ? (
                           <ToteCard
@@ -151,7 +151,7 @@ export default function GridPage({ onSelectTote, onAddTote }) {
                           />
                         ) : (
                           <div className="opacity-30">
-                            <div className="w-8 sm:w-12 md:w-16 h-8 sm:h-12 md:h-16 border-2 border-dashed border-gray-600/30 rounded-lg" />
+                            <div className="w-14 sm:w-20 md:w-28 h-6 sm:h-8 md:h-10 border-2 border-dashed border-gray-600/30 rounded-lg" />
                           </div>
                         )}
                       </div>
@@ -164,7 +164,7 @@ export default function GridPage({ onSelectTote, onAddTote }) {
                   {COLUMN_LABELS.map((label) => (
                     <div
                       key={label}
-                      className={`w-12 sm:w-16 md:w-20 text-center ${
+                      className={`w-16 sm:w-24 md:w-32 text-center ${
                         ["C", "D", "E"].includes(label)
                           ? "text-gray-500"
                           : "text-blue-600"
