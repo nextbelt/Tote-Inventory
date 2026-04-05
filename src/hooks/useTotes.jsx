@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { toteService } from "../services/toteService";
+import { toteService, migrateLocalToSupabase } from "../services/toteService";
 
 const ToteContext = createContext(null);
 
@@ -32,6 +32,7 @@ export function ToteProvider({ children }) {
   useEffect(() => {
     const init = async () => {
       await toteService.testConnection();
+      await migrateLocalToSupabase();
       await loadData();
     };
     init();

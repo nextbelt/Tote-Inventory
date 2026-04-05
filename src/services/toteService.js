@@ -22,6 +22,65 @@ function saveLocalTotes(totes) {
 }
 
 // ---------------------------------------------------------------------------
+// One-time migration: localStorage → Supabase
+// ---------------------------------------------------------------------------
+
+export async function migrateLocalToSupabase() {
+  if (!supabase) return;
+
+  // Skip if already migrated
+  const migrated = localStorage.getItem("totes-migration-done");
+  if (migrated) return;
+
+  const localTotes = getLocalTotes();
+  if (localTotes.length === 0) {
+    localStorage.setItem("totes-migration-done", "true");
+    return;
+  }
+
+  try {
+    // Fetch existing totes from Supabase to avoid duplicates
+    const { data: existing, error: fetchErr } = await supabase
+      .from("totes")
+      .select("position, name");
+    if (fetchErr) throw fetchErr;
+
+    const existingKeys = new Set(
+      (existing || []).map((t) => `${t.position}::${t.name}`)
+    );
+
+    // Filter to only totes not already in Supabase
+    const toInsert = localTotes
+      .filter((t) => !existingKeys.has(`${t.position}::${t.name}`))
+      .map((t) => ({
+        name: (t.name || "").trim(),
+        position: t.position,
+        items: Array.isArray(t.items) ? t.items : [],
+        created_at: t.created_at || new Date().toISOString(),
+        updated_at: t.updated_at || new Date().toISOString(),
+      }));
+
+    if (toInsert.length > 0) {
+      const { error: insertErr } = await supabase
+        .from("totes")
+        .insert(toInsert);
+      if (insertErr) throw insertErr;
+    }
+
+    localStorage.setItem("totes-migration-done", "true");
+    // eslint-disable-next-line no-console
+    console.log(
+      `Migration complete: ${toInsert.length} totes synced to Supabase ` +
+        `(${localTotes.length - toInsert.length} already existed).`
+    );
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("localStorage → Supabase migration failed, will retry next load:", err);
+    // Don't mark as done — will retry on next page load
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
 
