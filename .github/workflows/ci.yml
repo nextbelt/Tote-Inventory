@@ -33,3 +33,18 @@ jobs:
       - name: Security audit
         run: npm audit --audit-level=high
         continue-on-error: true
+
+  deploy:
+    needs: quality
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm i -g @railway/cli
+
+      - name: Deploy to Railway
+        run: railway up --service Tote-Inventory
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
