@@ -1,3 +1,7 @@
+// Wall positions for overflow totes not on the rack
+export const LEFT_WALL_POSITIONS = ["LW1", "LW2", "LW3", "LW4", "LW5"];
+export const RIGHT_WALL_POSITIONS = ["RW1", "RW2", "RW3", "RW4", "RW5"];
+
 export const SHELF_POSITIONS = [
   "A1",
   "A2",
@@ -25,6 +29,8 @@ export const SHELF_POSITIONS = [
   "G3",
   "G4",
   "G5",
+  ...LEFT_WALL_POSITIONS,
+  ...RIGHT_WALL_POSITIONS,
 ];
 
 // Grid layout: each row defines which positions exist.

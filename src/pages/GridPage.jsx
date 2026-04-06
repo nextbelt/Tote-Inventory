@@ -3,7 +3,12 @@ import { useState } from "react";
 import SearchBar from "../components/SearchBar";
 import ToteCard from "../components/ToteCard";
 import { useTotes } from "../hooks/useTotes";
-import { COLUMN_LABELS, SHELF_LAYOUT } from "../utils/constants";
+import {
+  COLUMN_LABELS,
+  LEFT_WALL_POSITIONS,
+  RIGHT_WALL_POSITIONS,
+  SHELF_LAYOUT,
+} from "../utils/constants";
 
 export default function GridPage({ onSelectTote, onAddTote }) {
   const { totes, loading, loadData } = useTotes();
@@ -74,7 +79,7 @@ export default function GridPage({ onSelectTote, onAddTote }) {
                   {totes.length}
                 </span>
                 <span className="text-gray-600 hidden sm:inline">
-                  of 26 positions
+                  of 36 positions
                 </span>
                 <span className="text-gray-600 sm:hidden">totes</span>
               </div>
@@ -129,62 +134,138 @@ export default function GridPage({ onSelectTote, onAddTote }) {
             <>
               <div className="text-center mb-4 sm:mb-6 md:mb-8">
                 <h2 className="apple-subtitle mb-2">Storage Grid</h2>
-                <div className="w-16 sm:w-20 h-1 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full mx-auto" />
+                <div className="w-16 sm:w-20 h-1 bg-gradient-to-r from-amber-600 to-yellow-700 rounded-full mx-auto" />
               </div>
 
-              <div className="space-y-3 sm:space-y-4 md:space-y-6">
-                {SHELF_LAYOUT.map((row, rowIdx) => (
-                  <div
-                    key={rowIdx}
-                    className="flex justify-center gap-2 sm:gap-4 md:gap-6"
-                  >
-                    {row.map((pos, colIdx) => (
-                      <div
-                        key={colIdx}
-                        className="w-16 sm:w-24 md:w-32 flex justify-center"
-                      >
-                        {pos ? (
-                          <ToteCard
-                            position={pos}
-                            tote={totesByPosition[pos]}
-                            onClick={() => handleToteClick(pos)}
-                          />
-                        ) : (
-                          <div className="opacity-30">
-                            <div className="w-14 sm:w-20 md:w-28 h-6 sm:h-8 md:h-10 border-2 border-dashed border-gray-600/30 rounded-lg" />
+              {/* === Main layout: Left Wall + Rack + Right Wall === */}
+              <div className="flex justify-center items-start gap-3 sm:gap-4 md:gap-6">
+                {/* ---- LEFT WALL ---- */}
+                <div className="flex flex-col items-center">
+                  <div className="text-xs sm:text-sm font-bold text-gray-600 mb-2 sm:mb-3 text-center">
+                    Left Wall
+                    <div className="text-xs font-normal text-gray-400">
+                      (Other)
+                    </div>
+                  </div>
+                  <div className="border-2 border-gray-300 rounded-xl bg-gradient-to-b from-gray-50 to-gray-100 p-2 sm:p-3 shadow-inner">
+                    <div className="flex flex-col gap-1 sm:gap-2">
+                      {LEFT_WALL_POSITIONS.map((pos) => (
+                        <ToteCard
+                          key={pos}
+                          position={pos}
+                          tote={totesByPosition[pos]}
+                          onClick={() => handleToteClick(pos)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* ---- CENTER: Rack + Labels ---- */}
+                <div className="flex flex-col items-center">
+                  {/* Wooden shelving unit */}
+                  <div className="relative mx-auto w-fit" id="shelf-unit">
+                    {/* Top crossbeam */}
+                    <div className="mx-6 sm:mx-8 md:mx-10 h-3 sm:h-4 rounded-t-md shadow-md border-t border-amber-500/40 bg-gradient-to-b from-amber-600 via-amber-700 to-amber-800" />
+
+                    {SHELF_LAYOUT.map((row, rowIdx) => (
+                        <div key={rowIdx}>
+                          {/* Row: uprights + totes */}
+                          <div className="flex items-end">
+                            {/* Left upright */}
+                            <div className="w-5 sm:w-7 md:w-9 self-stretch shadow-inner border-x border-amber-800/30 bg-gradient-to-r from-amber-700 via-amber-600 to-amber-700" />
+
+                            {/* Tote slots */}
+                            <div className="flex justify-center gap-1 sm:gap-2 md:gap-3 py-2 sm:py-3 md:py-4 px-1 sm:px-2">
+                              {row.map((pos, colIdx) => (
+                                <div
+                                  key={colIdx}
+                                  className="w-16 sm:w-24 md:w-32 flex justify-center"
+                                >
+                                  {pos ? (
+                                    <ToteCard
+                                      position={pos}
+                                      tote={totesByPosition[pos]}
+                                      onClick={() => handleToteClick(pos)}
+                                    />
+                                  ) : (
+                                    <div className="w-14 sm:w-20 md:w-28 h-6 sm:h-8 md:h-10" />
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Right upright */}
+                            <div className="w-5 sm:w-7 md:w-9 self-stretch shadow-inner border-x border-amber-800/30 bg-gradient-to-r from-amber-700 via-amber-600 to-amber-700" />
                           </div>
-                        )}
+
+                          {/* Wooden shelf plank */}
+                          <div className="flex">
+                            <div className="w-5 sm:w-7 md:w-9 border-x border-amber-800/30 bg-gradient-to-r from-amber-700 via-amber-600 to-amber-700" />
+                            <div className="flex-1 h-3 sm:h-4 shadow-md relative bg-gradient-to-b from-amber-600 via-amber-700 to-amber-800">
+                              <div className="absolute top-0 left-0 right-0 h-px bg-amber-400/30" />
+                              <div className="absolute bottom-0 left-0 right-0 h-px bg-amber-950/50" />
+                            </div>
+                            <div className="w-5 sm:w-7 md:w-9 border-x border-amber-800/30 bg-gradient-to-r from-amber-700 via-amber-600 to-amber-700" />
+                          </div>
+                        </div>
+                    ))}
+
+                    {/* Bottom base — thicker plank */}
+                    <div className="mx-6 sm:mx-8 md:mx-10 h-4 sm:h-5 rounded-b-md shadow-lg border-b border-amber-900/60 bg-gradient-to-b from-amber-700 via-amber-800 to-amber-900" />
+                  </div>
+
+                  {/* Column labels */}
+                  <div className="mt-4 sm:mt-6 md:mt-8 flex justify-center gap-1 sm:gap-2 md:gap-3 text-xs sm:text-sm font-bold px-10 sm:px-14 md:px-18">
+                    {COLUMN_LABELS.map((label) => (
+                      <div
+                        key={label}
+                        className={`w-16 sm:w-24 md:w-32 text-center ${
+                          ["C", "D", "E"].includes(label)
+                            ? "text-gray-400"
+                            : "text-amber-700"
+                        }`}
+                      >
+                        {label}
                       </div>
                     ))}
                   </div>
-                ))}
-
-                {/* Column labels */}
-                <div className="mt-4 sm:mt-6 md:mt-8 flex justify-center gap-2 sm:gap-4 md:gap-6 text-xs sm:text-sm font-bold">
-                  {COLUMN_LABELS.map((label) => (
-                    <div
-                      key={label}
-                      className={`w-16 sm:w-24 md:w-32 text-center ${
-                        ["C", "D", "E"].includes(label)
-                          ? "text-gray-500"
-                          : "text-blue-600"
-                      }`}
-                    >
-                      {label}
-                    </div>
-                  ))}
                 </div>
+                {/* ---- end center ---- */}
 
-                <div className="mt-8 pt-8 border-t border-gray-700/50">
-                  <div className="text-center">
-                    <div className="text-lg font-bold bg-gradient-to-r from-gray-300 to-gray-400 bg-clip-text text-transparent mb-2">
-                      Storage Configuration
+                {/* ---- RIGHT WALL ---- */}
+                <div className="flex flex-col items-center">
+                  <div className="text-xs sm:text-sm font-bold text-gray-600 mb-2 sm:mb-3 text-center">
+                    Right Wall
+                    <div className="text-xs font-normal text-gray-400">
+                      (Other)
                     </div>
-                    <div className="text-gray-400 text-sm">
-                      A &amp; B columns: 5 levels each &bull; C, D, E columns: 2
-                      levels each (4 &amp; 5) &bull; F &amp; G columns: 5 levels
-                      each
+                  </div>
+                  <div className="border-2 border-gray-300 rounded-xl bg-gradient-to-b from-gray-50 to-gray-100 p-2 sm:p-3 shadow-inner">
+                    <div className="flex flex-col gap-1 sm:gap-2">
+                      {RIGHT_WALL_POSITIONS.map((pos) => (
+                        <ToteCard
+                          key={pos}
+                          position={pos}
+                          tote={totesByPosition[pos]}
+                          onClick={() => handleToteClick(pos)}
+                        />
+                      ))}
                     </div>
+                  </div>
+                </div>
+              </div>
+              {/* === end main layout === */}
+
+              <div className="mt-8 pt-8 border-t border-gray-200">
+                <div className="text-center">
+                  <div className="text-lg font-bold bg-gradient-to-r from-amber-600 to-amber-800 bg-clip-text text-transparent mb-2">
+                    Storage Configuration
+                  </div>
+                  <div className="text-gray-500 text-sm">
+                    A &amp; B columns: 5 levels each &bull; C, D, E columns: 2
+                    levels each (4 &amp; 5) &bull; F &amp; G columns: 5 levels
+                    each &bull; Left &amp; Right Walls: 5 overflow slots each
                   </div>
                 </div>
               </div>
@@ -275,34 +356,54 @@ export default function GridPage({ onSelectTote, onAddTote }) {
           <h3 className="apple-subtitle text-lg sm:text-xl mb-4 sm:mb-6 text-center">
             Quick Guide
           </h3>
-          <div className="flex gap-4 sm:gap-8 flex-wrap justify-center">
-            <div className="flex items-center gap-2 sm:gap-3 bg-white border border-gray-200 p-3 sm:p-4 rounded-xl sm:rounded-2xl shadow-sm">
-              <div className="flex flex-col items-center">
-                <div className="w-8 sm:w-10 md:w-12 h-1.5 sm:h-2 bg-gradient-to-br from-gray-200 via-gray-300 to-gray-400 rounded-t border border-gray-400/30" />
-                <div className="w-8 sm:w-10 md:w-12 h-6 sm:h-7 md:h-8 bg-gradient-to-br from-gray-700/90 to-gray-900/90 border border-gray-600/30 flex items-center justify-center relative">
-                  <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent" />
-                  <div className="text-white text-xs sm:text-sm font-bold z-10">
-                    Items
-                  </div>
+          <div className="flex gap-4 sm:gap-6 flex-wrap justify-center text-sm text-gray-600">
+            <div className="flex items-center gap-3 bg-white border border-gray-200 p-3 sm:p-4 rounded-xl shadow-sm">
+              <div className="flex flex-col items-center relative">
+                <div className="w-10 h-2 bg-gradient-to-br from-yellow-300 via-yellow-400 to-amber-500 rounded-t border border-yellow-600/40" />
+                <div className="w-10 h-7 bg-gradient-to-br from-gray-800 via-gray-900 to-black border border-gray-700/60" />
+                <div className="w-10 h-0.5 bg-gray-800" />
+                <div className="absolute -top-1 -right-1 w-4 h-4 bg-yellow-400 rounded-full border border-white flex items-center justify-center">
+                  <span className="text-gray-900 text-xs font-bold">2</span>
                 </div>
-                <div className="w-8 sm:w-10 md:w-12 h-0.5 bg-gray-700" />
               </div>
-              <span className="text-xs sm:text-sm text-gray-600 font-medium">
-                Occupied Tote
-              </span>
+              <div>
+                <div className="font-semibold">Occupied tote</div>
+                <div className="text-gray-400 text-xs">Click to view / edit contents</div>
+              </div>
             </div>
-            <div className="flex items-center gap-2 sm:gap-3 bg-white border border-gray-200 p-3 sm:p-4 rounded-xl sm:rounded-2xl shadow-sm">
-              <div className="flex flex-col items-center">
-                <div className="w-8 sm:w-10 md:w-12 h-1.5 sm:h-2 bg-gradient-to-br from-gray-200 via-gray-300 to-gray-400 rounded-t border border-gray-400/30" />
-                <div className="w-8 sm:w-10 md:w-12 h-6 sm:h-7 md:h-8 bg-gradient-to-br from-gray-700/90 to-gray-900/90 border border-gray-600/30 flex items-center justify-center relative">
-                  <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent" />
-                  <Plus className="w-2 sm:w-2.5 md:w-3 h-2 sm:h-2.5 md:h-3 text-white z-10" />
+
+            <div className="flex items-center gap-3 bg-white border border-gray-200 p-3 sm:p-4 rounded-xl shadow-sm">
+              <div className="flex flex-col items-center opacity-40">
+                <div className="w-10 h-2 bg-gradient-to-br from-yellow-300 via-yellow-400 to-amber-500 rounded-t border border-yellow-600/40" />
+                <div className="w-10 h-7 bg-gradient-to-br from-gray-800 via-gray-900 to-black border border-gray-700/60 flex items-center justify-center">
+                  <Plus className="w-3 h-3 text-gray-400" />
                 </div>
-                <div className="w-8 sm:w-10 md:w-12 h-0.5 bg-gray-700" />
+                <div className="w-10 h-0.5 bg-gray-800" />
               </div>
-              <span className="text-xs sm:text-sm text-gray-600 font-medium">
-                Empty Position
-              </span>
+              <div>
+                <div className="font-semibold">Empty slot</div>
+                <div className="text-gray-400 text-xs">Click to assign a tote</div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 bg-white border border-amber-200 p-3 sm:p-4 rounded-xl shadow-sm">
+              <div className="w-10 h-10 bg-gradient-to-b from-amber-600 via-amber-700 to-amber-800 rounded flex items-center justify-center">
+                <span className="text-amber-100 text-xs font-bold">A–G</span>
+              </div>
+              <div>
+                <div className="font-semibold">Rack  <span className="text-gray-400 font-normal text-xs">(A1–G5)</span></div>
+                <div className="text-gray-400 text-xs">26 positions on the shelf</div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 bg-white border border-gray-300 p-3 sm:p-4 rounded-xl shadow-sm">
+              <div className="w-10 h-10 bg-gray-100 rounded border-2 border-gray-300 flex items-center justify-center">
+                <span className="text-gray-500 text-xs font-bold leading-tight text-center">LW<br/>RW</span>
+              </div>
+              <div>
+                <div className="font-semibold">Walls  <span className="text-gray-400 font-normal text-xs">(LW / RW)</span></div>
+                <div className="text-gray-400 text-xs">10 overflow slots beside rack</div>
+              </div>
             </div>
           </div>
         </div>
