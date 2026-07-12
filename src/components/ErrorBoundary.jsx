@@ -13,12 +13,12 @@ export class ErrorBoundary extends React.Component {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-100">
+        <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-900">
           <div className="apple-card p-8 max-w-md text-center">
-            <h1 className="text-2xl font-bold text-gray-800 mb-4">
+            <h1 className="text-2xl font-bold text-gray-800 mb-4 dark:text-gray-200">
               Something went wrong
             </h1>
-            <p className="text-gray-600 mb-6">
+            <p className="text-gray-600 mb-6 dark:text-gray-400">
               The application encountered an unexpected error. Please refresh
               the page.
             </p>

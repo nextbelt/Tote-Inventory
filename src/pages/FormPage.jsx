@@ -120,14 +120,14 @@ export default function FormPage({ editTote, position, onBack, onSaved }) {
       style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 2rem)" }}
     >
       <header
-        className="sticky top-0 z-30 border-b border-white/40 bg-white/80 backdrop-blur-xl"
+        className="sticky top-0 z-30 border-b border-white/40 bg-white/80 backdrop-blur-xl dark:border-gray-800 dark:bg-gray-900/80"
         style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
       >
         <div className="mx-auto flex max-w-2xl items-center justify-between px-2 py-2">
           <button
             type="button"
             onClick={onBack}
-            className="flex min-h-[44px] items-center gap-1 rounded-xl px-2 font-medium text-blue-600"
+            className="flex min-h-[44px] items-center gap-1 rounded-xl px-2 font-medium text-blue-600 dark:text-blue-400"
           >
             <ChevronLeft className="h-5 w-5" aria-hidden="true" />
             Back
@@ -145,7 +145,7 @@ export default function FormPage({ editTote, position, onBack, onSaved }) {
           <div>
             <label
               htmlFor="tote-name"
-              className="mb-2 block text-sm font-semibold text-gray-700"
+              className="mb-2 block text-sm font-semibold text-gray-700 dark:text-gray-300"
             >
               Tote name
             </label>
@@ -165,16 +165,16 @@ export default function FormPage({ editTote, position, onBack, onSaved }) {
 
           {/* Position (read-only) */}
           <div>
-            <span className="mb-2 block text-sm font-semibold text-gray-700">
+            <span className="mb-2 block text-sm font-semibold text-gray-700 dark:text-gray-300">
               Where it goes
             </span>
-            <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 font-semibold text-blue-800">
+            <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 font-semibold text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-300">
               {position ? `${position} — ${path}` : "No position selected"}
             </div>
           </div>
 
           {/* Add items */}
-          <div className="border-t border-gray-200 pt-5">
+          <div className="border-t border-gray-200 pt-5 dark:border-gray-700">
             <h3 className="apple-subtitle mb-3 text-lg">Add items</h3>
             <div className="flex gap-2">
               <input
@@ -196,8 +196,8 @@ export default function FormPage({ editTote, position, onBack, onSaved }) {
               <label
                 className={`flex h-12 w-12 shrink-0 cursor-pointer items-center justify-center rounded-xl border-2 border-dashed ${
                   currentItem.image
-                    ? "border-green-400 bg-green-50 text-green-600"
-                    : "border-gray-300 text-gray-400"
+                    ? "border-green-400 bg-green-50 text-green-600 dark:border-green-600 dark:bg-green-950/40 dark:text-green-400"
+                    : "border-gray-300 text-gray-400 dark:border-gray-600 dark:text-gray-500"
                 } ${uploading ? "animate-pulse" : ""}`}
               >
                 <Camera className="h-5 w-5" aria-hidden="true" />
@@ -228,7 +228,7 @@ export default function FormPage({ editTote, position, onBack, onSaved }) {
                 <img
                   src={currentItem.image}
                   alt="Preview of new item"
-                  className="h-28 w-28 rounded-xl border border-gray-200 object-cover shadow"
+                  className="h-28 w-28 rounded-xl border border-gray-200 object-cover shadow dark:border-gray-700"
                 />
               </div>
             )}
@@ -236,7 +236,7 @@ export default function FormPage({ editTote, position, onBack, onSaved }) {
 
           {/* Items list */}
           {items.length > 0 && (
-            <div className="border-t border-gray-200 pt-5">
+            <div className="border-t border-gray-200 pt-5 dark:border-gray-700">
               <h3 className="apple-subtitle mb-3 text-lg">
                 Items ({items.length})
               </h3>
@@ -244,16 +244,16 @@ export default function FormPage({ editTote, position, onBack, onSaved }) {
                 {items.map((item) => (
                   <li
                     key={item.id}
-                    className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-2.5 shadow-sm"
+                    className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-2.5 shadow-sm dark:border-gray-700 dark:bg-gray-800"
                   >
                     {item.image && (
                       <img
                         src={item.image}
                         alt={item.name}
-                        className="h-12 w-12 rounded-lg border border-gray-200 object-cover"
+                        className="h-12 w-12 rounded-lg border border-gray-200 object-cover dark:border-gray-700"
                       />
                     )}
-                    <span className="min-w-0 flex-1 truncate font-semibold text-gray-800">
+                    <span className="min-w-0 flex-1 truncate font-semibold text-gray-800 dark:text-gray-200">
                       {item.name}
                     </span>
                     <button
@@ -271,7 +271,7 @@ export default function FormPage({ editTote, position, onBack, onSaved }) {
           )}
 
           {error && (
-            <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+            <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-700 dark:bg-red-950/40 dark:text-red-300">
               {error}
             </p>
           )}

@@ -13,9 +13,9 @@ function itemQty(item) {
 export default function SearchResults({ results, query, onOpenTote, onShowMe }) {
   if (results.length === 0) {
     return (
-      <div className="apple-card flex flex-col items-center gap-2 p-8 text-center text-gray-500">
-        <SearchX className="h-8 w-8 text-gray-300" aria-hidden="true" />
-        <p className="font-semibold text-gray-600">
+      <div className="apple-card flex flex-col items-center gap-2 p-8 text-center text-gray-500 dark:text-gray-400">
+        <SearchX className="h-8 w-8 text-gray-300 dark:text-gray-600" aria-hidden="true" />
+        <p className="font-semibold text-gray-600 dark:text-gray-400">
           Nothing matching “{query}”
         </p>
         <p className="text-sm">
@@ -44,23 +44,23 @@ export default function SearchResults({ results, query, onOpenTote, onShowMe }) 
                     src={item.image}
                     alt=""
                     loading="lazy"
-                    className="h-12 w-12 shrink-0 rounded-lg border border-gray-200 object-cover"
+                    className="h-12 w-12 shrink-0 rounded-lg border border-gray-200 object-cover dark:border-gray-700"
                   />
                 ) : (
-                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-gray-100">
-                    <Package className="h-6 w-6 text-gray-400" aria-hidden="true" />
+                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-800">
+                    <Package className="h-6 w-6 text-gray-400 dark:text-gray-500" aria-hidden="true" />
                   </span>
                 )}
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate font-semibold text-gray-900">
+                  <span className="block truncate font-semibold text-gray-900 dark:text-gray-100">
                     {type === "item" ? item.name : tote.name}
                     {type === "item" && itemQty(item) !== 1 && (
-                      <span className="ml-1.5 text-sm font-normal text-gray-500">
+                      <span className="ml-1.5 text-sm font-normal text-gray-500 dark:text-gray-400">
                         × {itemQty(item)}
                       </span>
                     )}
                   </span>
-                  <span className="block truncate text-sm text-gray-500">
+                  <span className="block truncate text-sm text-gray-500 dark:text-gray-400">
                     {type === "item" ? `${tote.name} · ${path}` : path}
                   </span>
                 </span>
@@ -68,7 +68,7 @@ export default function SearchResults({ results, query, onOpenTote, onShowMe }) 
               <button
                 type="button"
                 onClick={() => onShowMe(tote.position)}
-                className="mr-2 flex min-h-[48px] shrink-0 items-center gap-1 rounded-xl bg-blue-50 px-3 text-sm font-semibold text-blue-600"
+                className="mr-2 flex min-h-[48px] shrink-0 items-center gap-1 rounded-xl bg-blue-50 px-3 text-sm font-semibold text-blue-600 dark:bg-blue-950 dark:text-blue-400"
               >
                 <MapPin className="h-4 w-4" aria-hidden="true" />
                 Show me

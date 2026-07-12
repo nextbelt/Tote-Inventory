@@ -25,7 +25,7 @@ export default function Sheet({ title, onClose, children }) {
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="relative max-h-[85dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-white p-4 shadow-2xl"
+        className="relative max-h-[85dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-white p-4 shadow-2xl dark:bg-gray-900"
         style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}
       >
         <div className="mb-3 flex items-center justify-between">
@@ -34,7 +34,7 @@ export default function Sheet({ title, onClose, children }) {
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="flex h-11 w-11 items-center justify-center rounded-xl text-gray-500"
+            className="flex h-11 w-11 items-center justify-center rounded-xl text-gray-500 dark:text-gray-400"
           >
             <X className="h-5 w-5" aria-hidden="true" />
           </button>

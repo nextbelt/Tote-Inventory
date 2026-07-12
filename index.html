@@ -7,7 +7,21 @@
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
     <meta name="description" content="Find, add, and move everything stored in the garage." />
-    <meta name="theme-color" content="#eef2f7" />
+    <meta name="theme-color" content="#eef2f7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#111318" media="(prefers-color-scheme: dark)" />
+    <script>
+      // Apply the saved theme before first paint to avoid a white flash
+      try {
+        var t = localStorage.getItem("theme");
+        if (
+          t === "dark" ||
+          ((!t || t === "auto") &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches)
+        ) {
+          document.documentElement.classList.add("dark");
+        }
+      } catch (e) {}
+    </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/icons/icon-180.png" />
     <link rel="manifest" href="/manifest.webmanifest" />

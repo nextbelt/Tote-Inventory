@@ -41,6 +41,11 @@ body {
   overscroll-behavior-y: none;
 }
 
+.dark body {
+  background: linear-gradient(135deg, #111318 0%, #1a2030 100%);
+  color-scheme: dark;
+}
+
 button,
 [role="button"] {
   -webkit-tap-highlight-color: transparent;
@@ -94,6 +99,12 @@ button {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
 }
 
+.dark .apple-card {
+  background: rgba(30, 34, 42, 0.85);
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+}
+
 .apple-input {
   background: rgba(255, 255, 255, 0.9);
   border: 1px solid rgba(0, 0, 0, 0.1);
@@ -114,6 +125,16 @@ button {
   box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.1);
 }
 
+.dark .apple-input {
+  background: rgba(38, 42, 52, 0.9);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #f3f4f6;
+}
+
+.dark .apple-input::placeholder {
+  color: #6b7280;
+}
+
 .apple-title {
   font-weight: 700;
   letter-spacing: -0.02em;
@@ -125,6 +146,11 @@ button {
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--apple-dark-gray);
+}
+
+.dark .apple-title,
+.dark .apple-subtitle {
+  color: #f3f4f6;
 }
 
 } /* end @layer components */

@@ -68,7 +68,7 @@ function WorkbenchSection({ fixture, ...slotProps }) {
     >
       {/* Pegboard with tools */}
       <div
-        className="relative flex-1 rounded-t border border-amber-200 bg-amber-50 min-h-[72px]"
+        className="relative flex-1 rounded-t border border-amber-200 bg-amber-50 min-h-[72px] dark:border-amber-900/60 dark:bg-amber-950/30"
         style={{
           backgroundImage:
             "radial-gradient(circle, rgba(180,130,70,0.25) 1px, transparent 1.2px)",
@@ -139,7 +139,7 @@ export default function WallPanel({
 
   return (
     <section aria-label={wall.label} className="px-1 sm:px-2">
-      <div className="rounded-xl border border-gray-200 bg-gradient-to-b from-white to-gray-50 p-1.5 sm:p-3 shadow-inner">
+      <div className="rounded-xl border border-gray-200 bg-gradient-to-b from-white to-gray-50 p-1.5 sm:p-3 shadow-inner dark:border-gray-700 dark:from-gray-900 dark:to-gray-950">
         <div className={multi ? "flex items-stretch gap-1 sm:gap-2" : ""}>
           {wall.fixtures.map((fixture) => {
             const Renderer = FIXTURE_RENDERERS[fixture.kind];
@@ -149,7 +149,7 @@ export default function WallPanel({
           })}
         </div>
         {/* Concrete floor */}
-        <div className="mt-0.5 h-2 rounded-b bg-gradient-to-b from-gray-300 to-gray-400" />
+        <div className="mt-0.5 h-2 rounded-b bg-gradient-to-b from-gray-300 to-gray-400 dark:from-gray-600 dark:to-gray-700" />
       </div>
     </section>
   );
@@ -162,14 +162,14 @@ export default function WallPanel({
 export function MiniMap({ activeWallId }) {
   const bar = (id, cls) =>
     `${cls} rounded-sm transition-colors ${
-      activeWallId === id ? "bg-blue-500" : "bg-gray-300"
+      activeWallId === id ? "bg-blue-500" : "bg-gray-300 dark:bg-gray-600"
     }`;
   return (
     <div aria-hidden="true" className="relative h-10 w-14 shrink-0">
       <div className={bar("front", "absolute inset-x-0 top-0 h-2")} />
       <div className={bar("left", "absolute left-0 top-2.5 bottom-0 w-2")} />
       <div className={bar("right", "absolute right-0 top-2.5 bottom-0 w-2")} />
-      <div className="absolute inset-x-3 bottom-0 border-b-2 border-dashed border-gray-300" />
+      <div className="absolute inset-x-3 bottom-0 border-b-2 border-dashed border-gray-300 dark:border-gray-600" />
     </div>
   );
 }

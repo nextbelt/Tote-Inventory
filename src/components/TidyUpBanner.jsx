@@ -77,7 +77,7 @@ export default function TidyUpBanner() {
 
   return (
     <>
-      <div className="mb-3 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+      <div className="mb-3 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
         <Sparkles className="h-4 w-4 shrink-0" aria-hidden="true" />
         <span className="flex-1">
           Tidy-up available:{" "}
@@ -89,7 +89,7 @@ export default function TidyUpBanner() {
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="min-h-[44px] shrink-0 rounded-lg px-2 font-bold text-amber-900 underline"
+          className="min-h-[44px] shrink-0 rounded-lg px-2 font-bold text-amber-900 underline dark:text-amber-200"
         >
           Review
         </button>
@@ -107,22 +107,22 @@ export default function TidyUpBanner() {
         <Sheet title="Tidy up the database" onClose={() => busy || setOpen(false)}>
           {dupCount > 0 && (
             <section className="mb-6">
-              <h3 className="mb-1 font-bold text-gray-900">
+              <h3 className="mb-1 font-bold text-gray-900 dark:text-gray-100">
                 Hidden duplicates ({dupCount})
               </h3>
-              <p className="mb-2 text-sm text-gray-600">
+              <p className="mb-2 text-sm text-gray-600 dark:text-gray-400">
                 An old bug saved extra copies of some spots. The app shows
                 only the newest copy — the one you see today. Removing the
                 older hidden copies changes nothing on screen, but stops a
                 deleted tote from being replaced by a stale copy.
               </p>
-              <ul className="mb-3 max-h-48 space-y-1 overflow-y-auto rounded-xl bg-gray-50 p-2 text-sm">
+              <ul className="mb-3 max-h-48 space-y-1 overflow-y-auto rounded-xl bg-gray-50 p-2 text-sm dark:bg-gray-800/60">
                 {dupGroups.map((g) => (
                   <li key={g.position} className="flex justify-between gap-2">
-                    <span className="font-semibold text-gray-800">
+                    <span className="font-semibold text-gray-800 dark:text-gray-200">
                       {g.position} · keeps “{g.keep.name}”
                     </span>
-                    <span className="shrink-0 text-gray-500">
+                    <span className="shrink-0 text-gray-500 dark:text-gray-400">
                       removes {g.older.length} old cop{g.older.length === 1 ? "y" : "ies"}
                     </span>
                   </li>
@@ -143,19 +143,19 @@ export default function TidyUpBanner() {
 
           {embedded.length > 0 && (
             <section>
-              <h3 className="mb-1 font-bold text-gray-900">
+              <h3 className="mb-1 font-bold text-gray-900 dark:text-gray-100">
                 Slow photos ({embedded.length})
               </h3>
-              <p className="mb-2 text-sm text-gray-600">
+              <p className="mb-2 text-sm text-gray-600 dark:text-gray-400">
                 {embedded.length === 1 ? "One photo is" : "Some photos are"}{" "}
                 stored inside the database itself ({photoMB} MB downloaded on
                 every open). Moving {embedded.length === 1 ? "it" : "them"} to
                 photo storage keeps the same picture and makes the app load
                 much faster. Nothing is removed until the copy succeeds.
               </p>
-              <ul className="mb-3 max-h-32 space-y-1 overflow-y-auto rounded-xl bg-gray-50 p-2 text-sm">
+              <ul className="mb-3 max-h-32 space-y-1 overflow-y-auto rounded-xl bg-gray-50 p-2 text-sm dark:bg-gray-800/60">
                 {embedded.map(({ tote, item }) => (
-                  <li key={`${tote.id}-${item.id}`} className="text-gray-700">
+                  <li key={`${tote.id}-${item.id}`} className="text-gray-700 dark:text-gray-300">
                     “{item.name}” in {tote.position} · {tote.name}
                   </li>
                 ))}

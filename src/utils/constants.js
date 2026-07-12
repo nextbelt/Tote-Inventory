@@ -1,12 +1,14 @@
 // ---------------------------------------------------------------------------
 // Garage layout — data-driven model of the physical garage.
 //
-// Position strings (A1…G5, LW1…LW5, RW1…RW5) are stable IDs stored in the
-// database. Never rename them — add new fixtures/slots here instead.
+// Position strings (A1…G5, LW<n>, RW<n>) are stable IDs stored in the
+// database. Never rename them. The front wall (racks + workbench) is fixed
+// physical geometry; the side walls are user-configurable shelf stacks —
+// see buildWalls().
 // ---------------------------------------------------------------------------
 
-export const LEFT_WALL_POSITIONS = ["LW1", "LW2", "LW3", "LW4", "LW5"];
-export const RIGHT_WALL_POSITIONS = ["RW1", "RW2", "RW3", "RW4", "RW5"];
+export const DEFAULT_LAYOUT = { leftShelves: 5, rightShelves: 5 };
+export const MAX_SIDE_SHELVES = 12;
 
 // Front-wall rack layout: columns A/B and F/G have 5 levels; C/D/E sit at
 // floor level around the workbench (levels 4–5 only). null = no slot.
@@ -20,125 +22,163 @@ export const SHELF_LAYOUT = [
 
 export const COLUMN_LABELS = ["A", "B", "C", "D", "E", "F", "G"];
 
-// The three navigable garage walls. Each wall is a list of fixtures; each
-// fixture renders as a physical structure (rack, workbench, wall shelf) and
-// owns a set of slot positions. Dimensions/labels are configuration — adding
-// a fixture (e.g. the top shelf) is a data change, not a UI rewrite.
-export const WALLS = [
-  {
-    id: "left",
-    label: "Left wall",
-    shortLabel: "Left",
-    fixtures: [
-      {
-        id: "left-shelf",
-        label: "Wall shelf",
-        kind: "wallShelf",
-        slots: LEFT_WALL_POSITIONS,
-      },
-    ],
-  },
-  {
-    id: "front",
-    label: "Front wall",
-    shortLabel: "Front",
-    fixtures: [
-      {
-        id: "rack-ab",
-        label: "Left rack",
-        kind: "rack",
-        // rows top → bottom; each row is a list of positions
-        rows: [
-          ["A1", "B1"],
-          ["A2", "B2"],
-          ["A3", "B3"],
-          ["A4", "B4"],
-          ["A5", "B5"],
-        ],
-      },
-      {
-        id: "workbench",
-        label: "Workbench",
-        kind: "workbench",
-        rows: [
-          ["C4", "D4", "E4"],
-          ["C5", "D5", "E5"],
-        ],
-      },
-      {
-        id: "rack-fg",
-        label: "Right rack",
-        kind: "rack",
-        rows: [
-          ["F1", "G1"],
-          ["F2", "G2"],
-          ["F3", "G3"],
-          ["F4", "G4"],
-          ["F5", "G5"],
-        ],
-      },
-    ],
-  },
-  {
-    id: "right",
-    label: "Right wall",
-    shortLabel: "Right",
-    fixtures: [
-      {
-        id: "right-shelf",
-        label: "Wall shelf",
-        kind: "wallShelf",
-        slots: RIGHT_WALL_POSITIONS,
-      },
-    ],
-  },
-];
+const FRONT_WALL = {
+  id: "front",
+  label: "Front wall",
+  shortLabel: "Front",
+  fixtures: [
+    {
+      id: "rack-ab",
+      label: "Left rack",
+      kind: "rack",
+      rows: [
+        ["A1", "B1"],
+        ["A2", "B2"],
+        ["A3", "B3"],
+        ["A4", "B4"],
+        ["A5", "B5"],
+      ],
+    },
+    {
+      id: "workbench",
+      label: "Workbench",
+      kind: "workbench",
+      rows: [
+        ["C4", "D4", "E4"],
+        ["C5", "D5", "E5"],
+      ],
+    },
+    {
+      id: "rack-fg",
+      label: "Right rack",
+      kind: "rack",
+      rows: [
+        ["F1", "G1"],
+        ["F2", "G2"],
+        ["F3", "G3"],
+        ["F4", "G4"],
+        ["F5", "G5"],
+      ],
+    },
+  ],
+};
 
-function fixtureSlots(fixture) {
-  if (fixture.slots) return fixture.slots;
-  if (fixture.rows) return fixture.rows.flat().filter(Boolean);
-  return [];
+const range = (prefix, count) =>
+  Array.from({ length: count }, (_, i) => `${prefix}${i + 1}`);
+
+/** Highest shelf index in use for a side-wall prefix ("LW"/"RW"). */
+function highestOccupied(prefix, occupiedPositions) {
+  let max = 0;
+  occupiedPositions.forEach((pos) => {
+    const m = new RegExp(`^${prefix}(\\d+)$`).exec(pos);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  });
+  return max;
 }
 
-// All valid positions, derived from the wall model so the two never drift.
-export const SHELF_POSITIONS = WALLS.flatMap((wall) =>
-  wall.fixtures.flatMap(fixtureSlots)
-);
+/**
+ * Build the three walls from the user's layout settings. A shelf that still
+ * holds a tote is always rendered, even if the settings say fewer shelves —
+ * changing a preference can never hide inventory.
+ */
+export function buildWalls(layout = DEFAULT_LAYOUT, occupiedPositions = []) {
+  const leftCount = Math.max(
+    1,
+    layout.leftShelves ?? DEFAULT_LAYOUT.leftShelves,
+    highestOccupied("LW", occupiedPositions)
+  );
+  const rightCount = Math.max(
+    1,
+    layout.rightShelves ?? DEFAULT_LAYOUT.rightShelves,
+    highestOccupied("RW", occupiedPositions)
+  );
 
+  return [
+    {
+      id: "left",
+      label: "Left wall",
+      shortLabel: "Left",
+      fixtures: [
+        {
+          id: "left-shelf",
+          label: "Wall shelf",
+          kind: "wallShelf",
+          slots: range("LW", leftCount),
+        },
+      ],
+    },
+    FRONT_WALL,
+    {
+      id: "right",
+      label: "Right wall",
+      shortLabel: "Right",
+      fixtures: [
+        {
+          id: "right-shelf",
+          label: "Wall shelf",
+          kind: "wallShelf",
+          slots: range("RW", rightCount),
+        },
+      ],
+    },
+  ];
+}
+
+/** All slots across a set of walls. */
+export function wallPositions(walls) {
+  return walls.flatMap((wall) =>
+    wall.fixtures.flatMap((f) => f.slots || (f.rows ? f.rows.flat().filter(Boolean) : []))
+  );
+}
+
+// Static defaults — the rendered app uses buildWalls() with live settings,
+// but validation and tests can rely on the default shape.
+export const WALLS = buildWalls(DEFAULT_LAYOUT);
+export const LEFT_WALL_POSITIONS = WALLS[0].fixtures[0].slots;
+export const RIGHT_WALL_POSITIONS = WALLS[2].fixtures[0].slots;
+export const SHELF_POSITIONS = wallPositions(WALLS);
 export const TOTAL_POSITIONS = SHELF_POSITIONS.length;
 
-const POSITION_INDEX = (() => {
+const FRONT_INDEX = (() => {
   const index = {};
-  WALLS.forEach((wall) => {
-    wall.fixtures.forEach((fixture) => {
-      fixtureSlots(fixture).forEach((pos) => {
-        index[pos] = { wall, fixture };
-      });
+  FRONT_WALL.fixtures.forEach((fixture) => {
+    fixture.rows.flat().filter(Boolean).forEach((pos) => {
+      index[pos] = fixture;
     });
   });
   return index;
 })();
 
-/** The wall a position lives on, or null for unknown positions. */
+/**
+ * Wall id for a position, by pattern — works for any shelf number, not just
+ * the currently configured count (older data must always resolve).
+ */
+export function getWallIdForPosition(position) {
+  if (/^LW\d+$/.test(position)) return "left";
+  if (/^RW\d+$/.test(position)) return "right";
+  if (FRONT_INDEX[position]) return "front";
+  return null;
+}
+
+/** Back-compat helper: the (default-shape) wall object for a position. */
 export function getWallForPosition(position) {
-  return POSITION_INDEX[position]?.wall || null;
+  const id = getWallIdForPosition(position);
+  return WALLS.find((w) => w.id === id) || null;
 }
 
 /**
  * Human-friendly location for a position, e.g.
  *   "A3"  → { wallId: "front", path: "Front wall · Left rack · Level 3" }
- *   "LW2" → { wallId: "left",  path: "Left wall · Shelf 2" }
+ *   "LW7" → { wallId: "left",  path: "Left wall · Shelf 7" }
  */
 export function describePosition(position) {
-  const entry = POSITION_INDEX[position];
-  if (!entry) return { wallId: null, path: position };
-  const { wall, fixture } = entry;
+  const wallId = getWallIdForPosition(position);
+  if (!wallId) return { wallId: null, path: position };
   const level = parseInt(String(position).replace(/\D/g, ""), 10);
-  const detail =
-    fixture.kind === "wallShelf"
-      ? `Shelf ${level}`
-      : `${fixture.label} · Level ${level}`;
-  return { wallId: wall.id, path: `${wall.label} · ${detail}` };
+  if (wallId === "left") return { wallId, path: `Left wall · Shelf ${level}` };
+  if (wallId === "right") return { wallId, path: `Right wall · Shelf ${level}` };
+  const fixture = FRONT_INDEX[position];
+  return { wallId, path: `Front wall · ${fixture.label} · Level ${level}` };
 }
 
 export const MAX_TOTE_NAME_LENGTH = 100;

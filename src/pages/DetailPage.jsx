@@ -13,7 +13,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Sheet from "../components/Sheet";
 import { useToast } from "../components/Toast";
 import { useTotes } from "../hooks/useTotes";
-import { describePosition, WALLS } from "../utils/constants";
+import { describePosition } from "../utils/constants";
 import { compressImage } from "../utils/images";
 import { toteService } from "../services/toteService";
 import { validateImageFile, validateItemName } from "../utils/validation";
@@ -42,8 +42,15 @@ export default function DetailPage({
   onDeleted,
   onShowInGarage,
 }) {
-  const { totes, totesByPosition, updateTote, deleteTote, moveTote, restoreTote } =
-    useTotes();
+  const {
+    totes,
+    totesByPosition,
+    walls,
+    updateTote,
+    deleteTote,
+    moveTote,
+    restoreTote,
+  } = useTotes();
   const toast = useToast();
 
   // Always read the latest version from the store
@@ -220,14 +227,14 @@ export default function DetailPage({
     >
       {/* Sticky header */}
       <header
-        className="sticky top-0 z-30 border-b border-white/40 bg-white/80 backdrop-blur-xl"
+        className="sticky top-0 z-30 border-b border-white/40 bg-white/80 backdrop-blur-xl dark:border-gray-800 dark:bg-gray-900/80"
         style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
       >
         <div className="mx-auto flex max-w-2xl items-center justify-between px-2 py-2">
           <button
             type="button"
             onClick={onBack}
-            className="flex min-h-[44px] items-center gap-1 rounded-xl px-2 font-medium text-blue-600"
+            className="flex min-h-[44px] items-center gap-1 rounded-xl px-2 font-medium text-blue-600 dark:text-blue-400"
           >
             <ChevronLeft className="h-5 w-5" aria-hidden="true" />
             Garage
@@ -236,7 +243,7 @@ export default function DetailPage({
             <button
               type="button"
               onClick={() => setSheet("move")}
-              className="flex min-h-[44px] items-center gap-1 rounded-xl px-3 text-sm font-semibold text-blue-600"
+              className="flex min-h-[44px] items-center gap-1 rounded-xl px-3 text-sm font-semibold text-blue-600 dark:text-blue-400"
             >
               <MoveRight className="h-4 w-4" aria-hidden="true" />
               Move
@@ -245,7 +252,7 @@ export default function DetailPage({
               type="button"
               onClick={() => onEdit(tote)}
               aria-label="Rename tote"
-              className="flex h-11 w-11 items-center justify-center rounded-xl text-blue-600"
+              className="flex h-11 w-11 items-center justify-center rounded-xl text-blue-600 dark:text-blue-400"
             >
               <Edit2 className="h-4 w-4" aria-hidden="true" />
             </button>
@@ -266,11 +273,11 @@ export default function DetailPage({
         <button
           type="button"
           onClick={() => onShowInGarage(tote.position)}
-          className="mb-5 inline-flex min-h-[44px] items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-4 text-sm font-semibold text-blue-700"
+          className="mb-5 inline-flex min-h-[44px] items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-4 text-sm font-semibold text-blue-700 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-300"
         >
           <MapPin className="h-4 w-4" aria-hidden="true" />
           {path}
-          <span className="font-normal text-blue-500">· Show me</span>
+          <span className="font-normal text-blue-500 dark:text-blue-400">· Show me</span>
         </button>
 
         {/* Quick add */}
@@ -292,8 +299,8 @@ export default function DetailPage({
             <label
               className={`flex h-12 w-12 shrink-0 cursor-pointer items-center justify-center rounded-xl border-2 border-dashed ${
                 newItemImage
-                  ? "border-green-400 bg-green-50 text-green-600"
-                  : "border-gray-300 text-gray-400"
+                  ? "border-green-400 bg-green-50 text-green-600 dark:border-green-600 dark:bg-green-950/40 dark:text-green-400"
+                  : "border-gray-300 text-gray-400 dark:border-gray-600 dark:text-gray-500"
               } ${uploading ? "animate-pulse" : ""}`}
             >
               <Camera className="h-5 w-5" aria-hidden="true" />
@@ -319,11 +326,11 @@ export default function DetailPage({
             </button>
           </div>
           {newItemImage && (
-            <div className="mt-2 flex items-center gap-2 text-sm text-gray-500">
+            <div className="mt-2 flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
               <img
                 src={newItemImage}
                 alt="New item preview"
-                className="h-12 w-12 rounded-lg border border-gray-200 object-cover"
+                className="h-12 w-12 rounded-lg border border-gray-200 object-cover dark:border-gray-700"
               />
               Photo attached
               <button
@@ -343,14 +350,14 @@ export default function DetailPage({
             Items ({items.length})
           </h2>
           {totalThings !== items.length && (
-            <span className="text-sm text-gray-500">
+            <span className="text-sm text-gray-500 dark:text-gray-400">
               {totalThings} things total
             </span>
           )}
         </div>
 
         {items.length === 0 ? (
-          <div className="apple-card p-8 text-center text-gray-500">
+          <div className="apple-card p-8 text-center text-gray-500 dark:text-gray-400">
             Nothing in this tote yet — add the first item above.
           </div>
         ) : (
@@ -374,18 +381,18 @@ export default function DetailPage({
                         src={item.image}
                         alt={item.name}
                         loading="lazy"
-                        className="h-14 w-14 rounded-lg border border-gray-200 object-cover"
+                        className="h-14 w-14 rounded-lg border border-gray-200 object-cover dark:border-gray-700"
                       />
                     </button>
                   ) : (
-                    <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-300">
+                    <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-300 dark:bg-gray-800 dark:text-gray-600">
                       <Camera className="h-5 w-5" aria-hidden="true" />
                     </span>
                   )}
                   <div className="min-w-0 flex-1">
                     <p
                       className={`line-clamp-2 break-words font-semibold leading-snug ${
-                        out ? "text-gray-400 line-through" : "text-gray-900"
+                        out ? "text-gray-400 line-through dark:text-gray-500" : "text-gray-900 dark:text-gray-100"
                       }`}
                     >
                       {item.name}
@@ -396,18 +403,18 @@ export default function DetailPage({
                       </span>
                     )}
                   </div>
-                  <div className="flex shrink-0 items-center gap-0.5 rounded-xl bg-gray-100 p-0.5">
+                  <div className="flex shrink-0 items-center gap-0.5 rounded-xl bg-gray-100 p-0.5 dark:bg-gray-800">
                     <button
                       type="button"
                       onClick={() => changeQty(item, -1)}
                       disabled={qty === 0}
                       aria-label={`Use one ${item.name}`}
-                      className="flex h-11 w-11 items-center justify-center rounded-lg text-gray-700 disabled:opacity-30"
+                      className="flex h-11 w-11 items-center justify-center rounded-lg text-gray-700 disabled:opacity-30 dark:text-gray-200"
                     >
                       <Minus className="h-4 w-4" aria-hidden="true" />
                     </button>
                     <span
-                      className="w-7 text-center text-sm font-bold text-gray-900"
+                      className="w-7 text-center text-sm font-bold text-gray-900 dark:text-gray-100"
                       aria-label={`Quantity: ${qty}`}
                     >
                       {qty}
@@ -416,7 +423,7 @@ export default function DetailPage({
                       type="button"
                       onClick={() => changeQty(item, 1)}
                       aria-label={`Add one ${item.name}`}
-                      className="flex h-11 w-11 items-center justify-center rounded-lg text-gray-700"
+                      className="flex h-11 w-11 items-center justify-center rounded-lg text-gray-700 dark:text-gray-200"
                     >
                       <Plus className="h-4 w-4" aria-hidden="true" />
                     </button>
@@ -425,7 +432,7 @@ export default function DetailPage({
                     type="button"
                     onClick={() => removeItem(item)}
                     aria-label={`Remove ${item.name}`}
-                    className="flex h-11 w-9 items-center justify-center rounded-lg text-gray-400"
+                    className="flex h-11 w-9 items-center justify-center rounded-lg text-gray-400 dark:text-gray-500"
                   >
                     <X className="h-4 w-4" aria-hidden="true" />
                   </button>
@@ -439,12 +446,12 @@ export default function DetailPage({
       {/* Move sheet */}
       {sheet === "move" && (
         <Sheet title={`Move “${tote.name}”`} onClose={() => setSheet(null)}>
-          <p className="mb-3 text-sm text-gray-500">
+          <p className="mb-3 text-sm text-gray-500 dark:text-gray-400">
             Pick an empty spot. It&apos;s now in {path}.
           </p>
-          {WALLS.map((wall) => (
+          {walls.map((wall) => (
             <div key={wall.id} className="mb-4">
-              <h3 className="mb-1.5 text-sm font-bold text-gray-700">
+              <h3 className="mb-1.5 text-sm font-bold text-gray-700 dark:text-gray-300">
                 {wall.label}
               </h3>
               <div className="grid grid-cols-5 gap-1.5">
@@ -461,8 +468,8 @@ export default function DetailPage({
                         isHere
                           ? "border-blue-500 bg-blue-500 text-white"
                           : occupant
-                          ? "border-gray-200 bg-gray-100 text-gray-400"
-                          : "border-blue-200 bg-white text-blue-700 active:bg-blue-50"
+                          ? "border-gray-200 bg-gray-100 text-gray-400 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-500"
+                          : "border-blue-200 bg-white text-blue-700 active:bg-blue-50 dark:border-blue-800 dark:bg-gray-800 dark:text-blue-300 dark:active:bg-blue-950"
                       }`}
                     >
                       {pos}
@@ -488,7 +495,7 @@ export default function DetailPage({
       {/* Delete sheet */}
       {sheet === "delete" && (
         <Sheet title="Delete this tote?" onClose={() => setSheet(null)}>
-          <p className="mb-4 text-gray-600">
+          <p className="mb-4 text-gray-600 dark:text-gray-400">
             “{tote.name}” and its {items.length} item
             {items.length === 1 ? "" : "s"} will be removed. You&apos;ll get a
             few seconds to undo.
@@ -497,7 +504,7 @@ export default function DetailPage({
             <button
               type="button"
               onClick={() => setSheet(null)}
-              className="min-h-[48px] flex-1 rounded-xl border border-gray-300 font-semibold text-gray-700"
+              className="min-h-[48px] flex-1 rounded-xl border border-gray-300 font-semibold text-gray-700 dark:border-gray-600 dark:text-gray-300"
             >
               Cancel
             </button>

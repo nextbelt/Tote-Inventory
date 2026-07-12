@@ -38,7 +38,7 @@ export default function ToteCard({
         }`}
       >
         <div className="flex items-center gap-2">
-          <span className="w-10 shrink-0 text-xs font-bold text-gray-500">
+          <span className="w-10 shrink-0 text-xs font-bold text-gray-500 dark:text-gray-400">
             {position}
           </span>
           {tote ? (
@@ -62,7 +62,7 @@ export default function ToteCard({
               </span>
             </span>
           ) : (
-            <span className="flex h-12 flex-1 items-center justify-center gap-1 rounded-lg border-2 border-dashed border-gray-300 text-sm text-gray-400 group-active:border-blue-400 group-active:text-blue-500">
+            <span className="flex h-12 flex-1 items-center justify-center gap-1 rounded-lg border-2 border-dashed border-gray-300 text-sm text-gray-400 group-active:border-blue-400 group-active:text-blue-500 dark:border-gray-600 dark:text-gray-500">
               <Plus className="h-4 w-4" aria-hidden="true" />
               Add tote
             </span>
@@ -83,7 +83,7 @@ export default function ToteCard({
         highlighted ? "locate-highlight" : ""
       }`}
     >
-      <span className="mb-0.5 text-[10px] sm:text-xs font-semibold text-gray-600">
+      <span className="mb-0.5 text-[10px] sm:text-xs font-semibold text-gray-600 dark:text-gray-400">
         {position}
       </span>
       <span className="relative block w-full max-w-[7rem]">
@@ -105,7 +105,7 @@ export default function ToteCard({
           ) : (
             <span className="absolute inset-0 flex items-center justify-center">
               <Plus
-                className="h-3 w-3 sm:h-4 sm:w-4 text-gray-500"
+                className="h-3 w-3 sm:h-4 sm:w-4 text-gray-500 dark:text-gray-400"
                 aria-hidden="true"
               />
             </span>

@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { migrateLocalToSupabase, toteService } from "../services/toteService";
+import { buildWalls, DEFAULT_LAYOUT, wallPositions } from "../utils/constants";
 
 const ToteContext = createContext(null);
 
@@ -16,14 +17,17 @@ export function ToteProvider({ children }) {
   const [loading, setLoading] = useState(true); // first load only
   const [refreshing, setRefreshing] = useState(false);
   const [source, setSource] = useState(null); // "cloud" | "cache" | "local"
+  const [layout, setLayout] = useState(DEFAULT_LAYOUT);
   const subscriptionRef = useRef(null);
 
   const loadData = useCallback(async ({ background = false } = {}) => {
     if (!background) setRefreshing(true);
     try {
-      const { data, source: src } = await toteService.getTotes();
+      const { data, source: src, layout: savedLayout } =
+        await toteService.getTotes();
       setTotes(Array.isArray(data) ? data : []);
       setSource(src);
+      if (savedLayout) setLayout({ ...DEFAULT_LAYOUT, ...savedLayout });
     } catch {
       setTotes([]);
     } finally {
@@ -89,6 +93,14 @@ export function ToteProvider({ children }) {
     [saveTote]
   );
 
+  /** Save the side-wall shelf counts (synced to other devices). */
+  const saveLayout = useCallback(async (nextLayout) => {
+    const merged = { ...DEFAULT_LAYOUT, ...nextLayout };
+    await toteService.saveLayout(merged);
+    setLayout(merged);
+    return merged;
+  }, []);
+
   // One tote per position (positions are unique in the database; local mode
   // keeps the most recently updated if legacy duplicates exist).
   const totesByPosition = useMemo(() => {
@@ -105,6 +117,13 @@ export function ToteProvider({ children }) {
     return map;
   }, [totes]);
 
+  // Walls derive from the saved layout; occupied slots always stay visible
+  const walls = useMemo(
+    () => buildWalls(layout, Object.keys(totesByPosition)),
+    [layout, totesByPosition]
+  );
+  const totalPositions = useMemo(() => wallPositions(walls).length, [walls]);
+
   const value = useMemo(
     () => ({
       totes,
@@ -112,12 +131,16 @@ export function ToteProvider({ children }) {
       loading,
       refreshing,
       source,
+      layout,
+      walls,
+      totalPositions,
       loadData,
       saveTote,
       updateTote,
       deleteTote,
       moveTote,
       restoreTote,
+      saveLayout,
     }),
     [
       totes,
@@ -125,12 +148,16 @@ export function ToteProvider({ children }) {
       loading,
       refreshing,
       source,
+      layout,
+      walls,
+      totalPositions,
       loadData,
       saveTote,
       updateTote,
       deleteTote,
       moveTote,
       restoreTote,
+      saveLayout,
     ]
   );
 

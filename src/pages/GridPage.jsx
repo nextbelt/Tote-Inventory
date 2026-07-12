@@ -1,11 +1,13 @@
-import { CloudOff, HardDrive, Package, RefreshCw } from "lucide-react";
+import { CloudOff, HardDrive, Package, RefreshCw, Wrench } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import WallPanel, { MiniMap } from "../components/GarageWalls";
 import SearchBar from "../components/SearchBar";
 import SearchResults from "../components/SearchResults";
+import ShelfEditor from "../components/ShelfEditor";
+import ThemeToggle from "../components/ThemeToggle";
 import TidyUpBanner from "../components/TidyUpBanner";
 import { useTotes } from "../hooks/useTotes";
-import { TOTAL_POSITIONS, WALLS } from "../utils/constants";
+import { getWallIdForPosition } from "../utils/constants";
 import { searchTotes } from "../utils/search";
 
 const prefersReducedMotion = () =>
@@ -20,16 +22,25 @@ export default function GridPage({
   highlightPosition,
   onClearHighlight,
 }) {
-  const { totes, totesByPosition, loading, refreshing, source, loadData } =
-    useTotes();
+  const {
+    totes,
+    totesByPosition,
+    loading,
+    refreshing,
+    source,
+    walls,
+    totalPositions,
+    loadData,
+  } = useTotes();
   const [searchTerm, setSearchTerm] = useState("");
   const [mode, setMode] = useState("garage"); // "garage" | "list"
+  const [editWall, setEditWall] = useState(null); // "left" | "right" | null
   const carouselRef = useRef(null);
   const scrollDebounceRef = useRef(null);
 
   const activeIndex = Math.max(
     0,
-    WALLS.findIndex((w) => w.id === activeWallId)
+    walls.findIndex((w) => w.id === activeWallId)
   );
 
   const scrollToWall = useCallback((index, smooth) => {
@@ -61,7 +72,7 @@ export default function GridPage({
       const el = carouselRef.current;
       if (!el || el.clientWidth === 0) return;
       const index = Math.round(el.scrollLeft / el.clientWidth);
-      const wall = WALLS[Math.min(WALLS.length - 1, Math.max(0, index))];
+      const wall = walls[Math.min(walls.length - 1, Math.max(0, index))];
       if (wall && wall.id !== activeWallId) onWallChange(wall.id);
     }, 80);
   };
@@ -95,12 +106,8 @@ export default function GridPage({
   const handleShowMe = (position) => {
     setSearchTerm("");
     setMode("garage");
-    const wall = WALLS.find((w) =>
-      w.fixtures.some((f) =>
-        (f.slots || f.rows?.flat() || []).includes(position)
-      )
-    );
-    if (wall) onWallChange(wall.id, position);
+    const wallId = getWallIdForPosition(position);
+    if (wallId) onWallChange(wallId, position);
   };
 
   const results = searchTerm.trim() ? searchTotes(totes, searchTerm) : null;
@@ -113,7 +120,7 @@ export default function GridPage({
     <div className="min-h-[100dvh] pb-8" style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 2rem)" }}>
       {/* Sticky header */}
       <header
-        className="sticky top-0 z-30 border-b border-white/40 bg-white/80 backdrop-blur-xl"
+        className="sticky top-0 z-30 border-b border-white/40 bg-white/80 backdrop-blur-xl dark:border-gray-800 dark:bg-gray-900/80"
         style={{
           paddingTop: "env(safe-area-inset-top, 0px)",
           paddingLeft: "env(safe-area-inset-left, 0px)",
@@ -128,16 +135,17 @@ export default function GridPage({
               </span>
               Garage Totes
             </h1>
-            <div className="flex items-center gap-1.5">
-              <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
-                {occupied}/{TOTAL_POSITIONS} spots
+            <div className="flex items-center gap-1">
+              <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-300">
+                {occupied}/{totalPositions} spots
               </span>
+              <ThemeToggle />
               <button
                 type="button"
                 onClick={() => loadData()}
                 disabled={refreshing}
                 aria-label="Refresh"
-                className="flex h-11 w-11 items-center justify-center rounded-xl text-blue-600 disabled:opacity-50"
+                className="flex h-11 w-11 items-center justify-center rounded-xl text-blue-600 disabled:opacity-50 dark:text-blue-400"
               >
                 <RefreshCw
                   className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
@@ -153,14 +161,14 @@ export default function GridPage({
       <main className="mx-auto max-w-3xl px-3 pt-3 sm:px-4">
         {/* Connection status */}
         {source === "cache" && (
-          <div className="mb-3 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <div className="mb-3 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/50 dark:text-amber-200">
             <CloudOff className="h-4 w-4 shrink-0" aria-hidden="true" />
             Offline — showing the last saved copy. Changes can&apos;t be saved
             right now.
           </div>
         )}
         {source === "local" && (
-          <div className="mb-3 flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">
+          <div className="mb-3 flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-300">
             <HardDrive className="h-4 w-4 shrink-0" aria-hidden="true" />
             Saved on this device only (cloud sync not set up).
           </div>
@@ -177,14 +185,14 @@ export default function GridPage({
           />
         ) : loading ? (
           <div className="space-y-3" aria-label="Loading totes">
-            <div className="h-11 animate-pulse rounded-xl bg-white/60" />
-            <div className="h-72 animate-pulse rounded-xl bg-white/60" />
-            <div className="h-24 animate-pulse rounded-xl bg-white/60" />
+            <div className="h-11 animate-pulse rounded-xl bg-white/60 dark:bg-gray-800/60" />
+            <div className="h-72 animate-pulse rounded-xl bg-white/60 dark:bg-gray-800/60" />
+            <div className="h-24 animate-pulse rounded-xl bg-white/60 dark:bg-gray-800/60" />
           </div>
         ) : (
           <>
             {/* Mode toggle */}
-            <div className="mb-2 flex rounded-xl bg-gray-200/70 p-1">
+            <div className="mb-2 flex rounded-xl bg-gray-200/70 p-1 dark:bg-gray-800/70">
               {[
                 ["garage", "Garage"],
                 ["list", "All totes"],
@@ -196,8 +204,8 @@ export default function GridPage({
                   aria-pressed={mode === value}
                   className={`min-h-[44px] flex-1 rounded-lg text-sm font-semibold transition-colors ${
                     mode === value
-                      ? "bg-white text-blue-600 shadow-sm"
-                      : "text-gray-600"
+                      ? "bg-white text-blue-600 shadow-sm dark:bg-gray-700 dark:text-blue-300"
+                      : "text-gray-600 dark:text-gray-400"
                   }`}
                 >
                   {label}
@@ -210,11 +218,11 @@ export default function GridPage({
                 {/* Wall tabs + orientation */}
                 <div className="mb-2 flex items-center gap-2">
                   <div
-                    className="flex flex-1 rounded-xl bg-gray-200/70 p-1"
+                    className="flex flex-1 rounded-xl bg-gray-200/70 p-1 dark:bg-gray-800/70"
                     role="group"
                     aria-label="Choose a wall"
                   >
-                    {WALLS.map((wall) => (
+                    {walls.map((wall) => (
                       <button
                         key={wall.id}
                         type="button"
@@ -222,8 +230,8 @@ export default function GridPage({
                         aria-pressed={wall.id === activeWallId}
                         className={`min-h-[44px] flex-1 rounded-lg text-sm font-semibold transition-colors ${
                           wall.id === activeWallId
-                            ? "bg-white text-blue-600 shadow-sm"
-                            : "text-gray-600"
+                            ? "bg-white text-blue-600 shadow-sm dark:bg-gray-700 dark:text-blue-300"
+                            : "text-gray-600 dark:text-gray-400"
                         }`}
                       >
                         {wall.shortLabel}
@@ -234,7 +242,7 @@ export default function GridPage({
                 </div>
 
                 {totes.length === 0 && (
-                  <div className="mb-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+                  <div className="mb-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950/50 dark:text-blue-200">
                     Your garage is empty — tap any slot to add your first tote.
                   </div>
                 )}
@@ -245,9 +253,9 @@ export default function GridPage({
                   onScroll={handleCarouselScroll}
                   className="wall-carousel -mx-3 sm:mx-0"
                 >
-                  {WALLS.map((wall) => (
+                  {walls.map((wall) => (
                     <div key={wall.id} className="wall-panel px-3 sm:px-0">
-                      <p className="mb-1 text-center text-xs font-semibold uppercase tracking-wide text-gray-400">
+                      <p className="mb-1 text-center text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
                         {wall.label}
                       </p>
                       <WallPanel
@@ -256,11 +264,23 @@ export default function GridPage({
                         onSlotClick={handleSlotClick}
                         highlightPosition={highlightPosition}
                       />
+                      {wall.id !== "front" && (
+                        <div className="mt-1.5 text-center">
+                          <button
+                            type="button"
+                            onClick={() => setEditWall(wall.id)}
+                            className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl px-3 text-sm font-semibold text-blue-600 dark:text-blue-400"
+                          >
+                            <Wrench className="h-4 w-4" aria-hidden="true" />
+                            Edit shelves
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
 
-                <p className="mt-3 text-center text-xs text-gray-500">
+                <p className="mt-3 text-center text-xs text-gray-500 dark:text-gray-400">
                   Swipe or use the tabs to change walls · Tap a tote to open it
                   · Tap an empty slot to add one
                 </p>
@@ -269,7 +289,7 @@ export default function GridPage({
 
             {mode === "list" &&
               (sortedTotes.length === 0 ? (
-                <div className="apple-card p-8 text-center text-gray-500">
+                <div className="apple-card p-8 text-center text-gray-500 dark:text-gray-400">
                   No totes yet — switch to Garage and tap an empty slot.
                 </div>
               ) : (
@@ -288,10 +308,10 @@ export default function GridPage({
                           <span className="w-11 shrink-0 rounded-lg bg-gray-900 px-2 py-1.5 text-center text-xs font-bold text-yellow-300">
                             {tote.position}
                           </span>
-                          <span className="min-w-0 flex-1 truncate font-semibold text-gray-900">
+                          <span className="min-w-0 flex-1 truncate font-semibold text-gray-900 dark:text-gray-100">
                             {tote.name}
                           </span>
-                          <span className="shrink-0 rounded-full bg-blue-100 px-2.5 py-1 text-xs font-semibold text-blue-800">
+                          <span className="shrink-0 rounded-full bg-blue-100 px-2.5 py-1 text-xs font-semibold text-blue-800 dark:bg-blue-950 dark:text-blue-300">
                             {count} item{count === 1 ? "" : "s"}
                           </span>
                         </button>
@@ -303,6 +323,10 @@ export default function GridPage({
           </>
         )}
       </main>
+
+      {editWall && (
+        <ShelfEditor wallId={editWall} onClose={() => setEditWall(null)} />
+      )}
     </div>
   );
 }

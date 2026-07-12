@@ -4,7 +4,7 @@ export default function SearchBar({ value, onChange }) {
   return (
     <div className="relative">
       <Search
-        className="absolute left-3 sm:left-4 top-1/2 h-4 w-4 sm:h-5 sm:w-5 -translate-y-1/2 text-gray-400"
+        className="absolute left-3 sm:left-4 top-1/2 h-4 w-4 sm:h-5 sm:w-5 -translate-y-1/2 text-gray-400 dark:text-gray-500"
         aria-hidden="true"
       />
       <input
@@ -23,7 +23,7 @@ export default function SearchBar({ value, onChange }) {
           type="button"
           onClick={() => onChange("")}
           aria-label="Clear search"
-          className="absolute right-1 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full text-gray-400"
+          className="absolute right-1 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full text-gray-400 dark:text-gray-500"
         >
           <X className="h-5 w-5" aria-hidden="true" />
         </button>

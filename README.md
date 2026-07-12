@@ -23,6 +23,11 @@ Safari via **Share → Add to Home Screen**.
   visual picker; destructive actions get a snackbar Undo.
 - **Offline-aware** — cloud data is mirrored locally for offline browsing;
   writes fail loudly instead of silently diverging.
+- **Build your own side walls** — "Edit shelves" on the Left/Right wall sets
+  how many shelf levels each wall has (synced to every device). A shelf that
+  still holds a tote can't be removed.
+- **Dark mode** — follows the phone's appearance automatically, with a
+  manual sun/moon override in the header.
 
 ## Tech Stack
 
@@ -64,9 +69,13 @@ Left wall   LW1–LW5 (shelf levels)
 Right wall  RW1–RW5 (shelf levels)
 ```
 
-Position strings are stable database IDs — never rename them. To model a new
-fixture (e.g. the high shelf above the racks), add it to `WALLS` with its
-slots; rendering, search paths, and the move picker pick it up automatically.
+Position strings are stable database IDs — never rename them. The side-wall
+shelf counts are user-editable in the app (stored as a hidden settings row
+in the `totes` table, so they sync across devices with no extra schema).
+The front wall is fixed physical geometry; to model a new fixture there
+(e.g. the high shelf above the racks), add it to the wall config in
+`constants.js` — rendering, search paths, and the move picker pick it up
+automatically.
 
 ## Project Structure
 

@@ -16,6 +16,34 @@ import { dataUriToBlob, findEmbeddedPhotos, stripForCache } from "../utils/maint
 
 const LOCAL_STORE_KEY = "totes-inventory"; // local-mode store (legacy key)
 const CACHE_KEY = "totes-cache"; // read-only mirror of cloud data
+const LOCAL_LAYOUT_KEY = "garage-layout"; // local-mode layout settings
+
+// In cloud mode the layout settings live in a hidden row of the totes table
+// (no extra table → works on the existing database, syncs via realtime).
+export const CONFIG_POSITION = "__config__";
+
+/** Split raw rows into real totes + the newest layout-settings row. */
+function splitConfig(rows) {
+  const totes = [];
+  let config = null;
+  (rows || []).forEach((row) => {
+    if (row.position === CONFIG_POSITION) {
+      if (
+        !config ||
+        new Date(row.updated_at || 0) > new Date(config.updated_at || 0)
+      ) {
+        config = row;
+      }
+    } else {
+      totes.push(row);
+    }
+  });
+  const layout =
+    config && config.items && !Array.isArray(config.items)
+      ? config.items
+      : null;
+  return { totes, layout, configRow: config };
+}
 
 export const storageMode = supabase ? "cloud" : "local";
 
@@ -134,12 +162,21 @@ export async function migrateLocalToSupabase() {
 
 export const toteService = {
   /**
-   * Return all totes plus where they came from:
-   *   { data, source: "cloud" | "cache" | "local" }
+   * Return all totes, where they came from, and the saved layout settings:
+   *   { data, source: "cloud" | "cache" | "local", layout | null }
    * "cache" means the cloud is unreachable and this is the last-known copy.
    */
   async getTotes() {
-    if (!supabase) return { data: getLocalTotes(), source: "local" };
+    if (!supabase) {
+      const layout = (() => {
+        try {
+          return JSON.parse(localStorage.getItem(LOCAL_LAYOUT_KEY)) || null;
+        } catch {
+          return null;
+        }
+      })();
+      return { data: getLocalTotes(), source: "local", layout };
+    }
 
     try {
       const { data, error } = await supabase
@@ -147,14 +184,66 @@ export const toteService = {
         .select("*")
         .order("created_at", { ascending: true });
       if (error) throw error;
-      const totes = data || [];
       // Strip embedded photos so a multi-MB legacy row can't overflow
       // the localStorage quota and silently kill offline browsing
-      writeJSON(CACHE_KEY, stripForCache(totes));
-      return { data: totes, source: "cloud" };
+      writeJSON(CACHE_KEY, stripForCache(data || []));
+      const { totes, layout } = splitConfig(data);
+      return { data: totes, source: "cloud", layout };
     } catch {
-      return { data: readJSON(CACHE_KEY), source: "cache" };
+      const { totes, layout } = splitConfig(readJSON(CACHE_KEY));
+      return { data: totes, source: "cache", layout };
     }
+  },
+
+  /**
+   * Persist the garage layout settings (side-wall shelf counts).
+   * Cloud mode upserts the hidden settings row; other devices pick the
+   * change up through the existing realtime subscription.
+   */
+  async saveLayout(layout) {
+    if (!supabase) {
+      try {
+        localStorage.setItem(LOCAL_LAYOUT_KEY, JSON.stringify(layout));
+      } catch {
+        // storage full — settings just won't persist
+      }
+      return layout;
+    }
+
+    return enqueueWrite(CONFIG_POSITION, async () => {
+      try {
+        const { data, error } = await supabase
+          .from("totes")
+          .select("id")
+          .eq("position", CONFIG_POSITION)
+          .order("updated_at", { ascending: false })
+          .limit(1);
+        if (error) throw error;
+
+        const row = {
+          items: layout,
+          updated_at: new Date().toISOString(),
+        };
+        if (data && data.length > 0) {
+          const { error: updErr } = await supabase
+            .from("totes")
+            .update(row)
+            .eq("id", data[0].id);
+          if (updErr) throw updErr;
+        } else {
+          const { error: insErr } = await supabase.from("totes").insert({
+            ...row,
+            name: "Garage layout (app settings)",
+            position: CONFIG_POSITION,
+            created_at: new Date().toISOString(),
+          });
+          if (insErr) throw insErr;
+        }
+        return layout;
+      } catch (err) {
+        throw friendlyError(err, "save the shelf layout");
+      }
+    });
   },
 
   /**
