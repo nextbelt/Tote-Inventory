@@ -64,4 +64,6 @@ When deploying to Netlify, Vercel, or similar, add these **environment variables
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
 
-The app gracefully falls back to localStorage when Supabase is unavailable.
+Without these variables the app runs in local, on-device-only mode. With
+them set, reads fall back to a cached copy while offline; writes report an
+error instead of silently saving to a local fork.
