@@ -13,32 +13,35 @@ const ToteContext = createContext(null);
 
 export function ToteProvider({ children }) {
   const [totes, setTotes] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true); // first load only
+  const [refreshing, setRefreshing] = useState(false);
+  const [source, setSource] = useState(null); // "cloud" | "cache" | "local"
   const subscriptionRef = useRef(null);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
+  const loadData = useCallback(async ({ background = false } = {}) => {
+    if (!background) setRefreshing(true);
     try {
-      const data = await toteService.getTotes();
+      const { data, source: src } = await toteService.getTotes();
       setTotes(Array.isArray(data) ? data : []);
+      setSource(src);
     } catch {
       setTotes([]);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
-  // Initialise: test connection, load data, subscribe to real-time changes
+  // Initialise: migrate any legacy local data, load, subscribe to realtime
   useEffect(() => {
     const init = async () => {
-      await toteService.testConnection();
       await migrateLocalToSupabase();
       await loadData();
     };
     init();
 
     subscriptionRef.current = toteService.subscribeToChanges(() => {
-      loadData();
+      loadData({ background: true });
     });
 
     return () => {
@@ -50,13 +53,10 @@ export function ToteProvider({ children }) {
 
   const saveTote = useCallback(async (tote, isNew) => {
     const savedTote = await toteService.saveTote(tote, isNew);
-    if (isNew) {
-      setTotes((prev) => [...prev, savedTote]);
-    } else {
-      setTotes((prev) =>
-        prev.map((t) => (t.id === savedTote.id ? savedTote : t))
-      );
-    }
+    setTotes((prev) => {
+      if (isNew) return [...prev, savedTote];
+      return prev.map((t) => (t.id === savedTote.id ? savedTote : t));
+    });
     return savedTote;
   }, []);
 
@@ -65,9 +65,63 @@ export function ToteProvider({ children }) {
     setTotes((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
+  /** Move a tote to a new (empty) position. */
+  const moveTote = useCallback(
+    (tote, position) => saveTote({ ...tote, position }, false),
+    [saveTote]
+  );
+
+  /** Re-create a just-deleted tote (undo). Gets a fresh id. */
+  const restoreTote = useCallback(
+    (tote) =>
+      saveTote(
+        { name: tote.name, position: tote.position, items: tote.items },
+        true
+      ),
+    [saveTote]
+  );
+
+  // One tote per position (positions are unique in the database; local mode
+  // keeps the most recently updated if legacy duplicates exist).
+  const totesByPosition = useMemo(() => {
+    const map = {};
+    totes.forEach((tote) => {
+      const existing = map[tote.position];
+      if (
+        !existing ||
+        new Date(tote.updated_at || 0) > new Date(existing.updated_at || 0)
+      ) {
+        map[tote.position] = tote;
+      }
+    });
+    return map;
+  }, [totes]);
+
   const value = useMemo(
-    () => ({ totes, loading, loadData, saveTote, deleteTote }),
-    [totes, loading, loadData, saveTote, deleteTote]
+    () => ({
+      totes,
+      totesByPosition,
+      loading,
+      refreshing,
+      source,
+      loadData,
+      saveTote,
+      deleteTote,
+      moveTote,
+      restoreTote,
+    }),
+    [
+      totes,
+      totesByPosition,
+      loading,
+      refreshing,
+      source,
+      loadData,
+      saveTote,
+      deleteTote,
+      moveTote,
+      restoreTote,
+    ]
   );
 
   return <ToteContext.Provider value={value}>{children}</ToteContext.Provider>;

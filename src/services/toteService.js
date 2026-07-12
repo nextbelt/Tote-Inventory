@@ -1,24 +1,59 @@
 import { supabase } from "../lib/supabase";
 
 // ---------------------------------------------------------------------------
-// localStorage fallback
+// Storage model
+//
+//   cloud mode (Supabase configured):
+//     - reads:  Supabase → mirrored to a local cache for offline browsing
+//     - writes: Supabase only. Failures THROW with a friendly message —
+//       we never silently write to localStorage, because those "shadow"
+//       totes would look saved but never sync to other devices.
+//   local mode (no Supabase env vars):
+//     - everything lives in localStorage under LOCAL_STORE_KEY.
 // ---------------------------------------------------------------------------
 
-function getLocalTotes() {
+const LOCAL_STORE_KEY = "totes-inventory"; // local-mode store (legacy key)
+const CACHE_KEY = "totes-cache"; // read-only mirror of cloud data
+
+export const storageMode = supabase ? "cloud" : "local";
+
+function readJSON(key) {
   try {
-    const data = localStorage.getItem("totes-inventory");
+    const data = localStorage.getItem(key);
     return data ? JSON.parse(data) : [];
   } catch {
     return [];
   }
 }
 
-function saveLocalTotes(totes) {
+function writeJSON(key, value) {
   try {
-    localStorage.setItem("totes-inventory", JSON.stringify(totes));
+    localStorage.setItem(key, JSON.stringify(value));
   } catch {
     // localStorage may be full or unavailable — silently degrade
   }
+}
+
+const getLocalTotes = () => readJSON(LOCAL_STORE_KEY);
+const saveLocalTotes = (totes) => writeJSON(LOCAL_STORE_KEY, totes);
+
+/** Convert Supabase/network failures into messages a person can act on. */
+function friendlyError(err, action) {
+  if (err?.code === "23505") {
+    return new Error(
+      "That spot already has a tote. Pick a different position."
+    );
+  }
+  if (
+    (typeof navigator !== "undefined" && navigator.onLine === false) ||
+    err?.message === "Failed to fetch" ||
+    err?.name === "TypeError"
+  ) {
+    return new Error(
+      `You look offline — the ${action} wasn't saved. Try again when you're back online.`
+    );
+  }
+  return new Error(`Couldn't ${action}. Please try again.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -49,7 +84,6 @@ export async function migrateLocalToSupabase() {
       (existing || []).map((t) => `${t.position}::${t.name}`)
     );
 
-    // Filter to only totes not already in Supabase
     const toInsert = localTotes
       .filter((t) => !existingKeys.has(`${t.position}::${t.name}`))
       .map((t) => ({
@@ -68,11 +102,6 @@ export async function migrateLocalToSupabase() {
     }
 
     localStorage.setItem("totes-migration-done", "true");
-    // eslint-disable-next-line no-console
-    console.log(
-      `Migration complete: ${toInsert.length} totes synced to Supabase ` +
-        `(${localTotes.length - toInsert.length} already existed).`
-    );
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn(
@@ -88,22 +117,13 @@ export async function migrateLocalToSupabase() {
 // ---------------------------------------------------------------------------
 
 export const toteService = {
-  /** Test whether the Supabase connection is healthy. */
-  async testConnection() {
-    if (!supabase) return false;
-    try {
-      const { error } = await supabase
-        .from("totes")
-        .select("count", { count: "exact", head: true });
-      return !error;
-    } catch {
-      return false;
-    }
-  },
-
-  /** Return all totes ordered by creation date. */
+  /**
+   * Return all totes plus where they came from:
+   *   { data, source: "cloud" | "cache" | "local" }
+   * "cache" means the cloud is unreachable and this is the last-known copy.
+   */
   async getTotes() {
-    if (!supabase) return getLocalTotes();
+    if (!supabase) return { data: getLocalTotes(), source: "local" };
 
     try {
       const { data, error } = await supabase
@@ -111,16 +131,19 @@ export const toteService = {
         .select("*")
         .order("created_at", { ascending: true });
       if (error) throw error;
-      return data || [];
+      const totes = data || [];
+      writeJSON(CACHE_KEY, totes);
+      return { data: totes, source: "cloud" };
     } catch {
-      return getLocalTotes();
+      return { data: readJSON(CACHE_KEY), source: "cache" };
     }
   },
 
   /**
    * Create or update a tote.
    * @param {object}  tote   – tote data (must include `id` for updates)
-   * @param {boolean} isNew  – true  → INSERT, false → UPDATE
+   * @param {boolean} isNew  – true → INSERT, false → UPDATE
+   * @throws {Error} in cloud mode when the write fails (never shadow-saves)
    */
   async saveTote(tote, isNew = false) {
     const toteData = {
@@ -130,10 +153,15 @@ export const toteService = {
       updated_at: new Date().toISOString(),
     };
 
-    // ---------- localStorage fallback ----------
+    // ---------- local mode ----------
     if (!supabase) {
       const totes = getLocalTotes();
       if (isNew) {
+        if (totes.some((t) => t.position === tote.position)) {
+          throw new Error(
+            "That spot already has a tote. Pick a different position."
+          );
+        }
         const localTote = {
           ...toteData,
           id: Date.now(),
@@ -144,15 +172,13 @@ export const toteService = {
         return localTote;
       }
       const idx = totes.findIndex((t) => t.id === tote.id);
-      if (idx >= 0) {
-        totes[idx] = { ...totes[idx], ...toteData };
-        saveLocalTotes(totes);
-        return totes[idx];
-      }
-      return tote;
+      if (idx < 0) throw new Error("Couldn't find that tote to update.");
+      totes[idx] = { ...totes[idx], ...toteData };
+      saveLocalTotes(totes);
+      return totes[idx];
     }
 
-    // ---------- Supabase ----------
+    // ---------- cloud mode ----------
     try {
       let data, error;
       if (isNew) {
@@ -172,30 +198,15 @@ export const toteService = {
       }
       if (error) throw error;
       return data;
-    } catch {
-      // Fall back to localStorage on network / Supabase errors
-      const totes = getLocalTotes();
-      if (isNew) {
-        const localTote = {
-          ...toteData,
-          id: Date.now(),
-          created_at: new Date().toISOString(),
-        };
-        totes.push(localTote);
-        saveLocalTotes(totes);
-        return localTote;
-      }
-      const idx = totes.findIndex((t) => t.id === tote.id);
-      if (idx >= 0) {
-        totes[idx] = { ...totes[idx], ...toteData };
-        saveLocalTotes(totes);
-        return totes[idx];
-      }
-      return tote;
+    } catch (err) {
+      throw friendlyError(err, isNew ? "save the tote" : "save your changes");
     }
   },
 
-  /** Delete a tote by ID. */
+  /**
+   * Delete a tote by ID.
+   * @throws {Error} in cloud mode when the delete fails
+   */
   async deleteTote(id) {
     if (!supabase) {
       saveLocalTotes(getLocalTotes().filter((t) => t.id !== id));
@@ -204,20 +215,22 @@ export const toteService = {
     try {
       const { error } = await supabase.from("totes").delete().eq("id", id);
       if (error) throw error;
-    } catch {
-      saveLocalTotes(getLocalTotes().filter((t) => t.id !== id));
+    } catch (err) {
+      throw friendlyError(err, "delete the tote");
     }
   },
 
   /**
    * Upload an image and return its public URL.
-   * Falls back to base64 data-URI when Supabase Storage is unavailable.
+   * Local mode stores a data-URI instead. In cloud mode a failed upload
+   * THROWS — base64 fallbacks used to bloat the database rows.
    */
   async uploadImage(file, fileName) {
     if (!supabase) {
-      return new Promise((resolve) => {
+      return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onloadend = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error("Could not read the photo."));
         reader.readAsDataURL(file);
       });
     }
@@ -232,12 +245,8 @@ export const toteService = {
         .from("tote-images")
         .getPublicUrl(fileName);
       return urlData.publicUrl;
-    } catch {
-      return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result);
-        reader.readAsDataURL(file);
-      });
+    } catch (err) {
+      throw friendlyError(err, "upload the photo");
     }
   },
 
