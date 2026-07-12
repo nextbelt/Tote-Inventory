@@ -114,9 +114,10 @@ export default function DetailPage({
       latestRef.current.items = null;
       try {
         await saveTote({ ...latestRef.current.tote, items: nextItems }, false);
-        setPendingItems(null);
+        // Keep the overlay if a newer edit was staged while we were saving
+        if (!latestRef.current.items) setPendingItems(null);
       } catch (err) {
-        setPendingItems(null); // fall back to the store's truth
+        if (!latestRef.current.items) setPendingItems(null);
         toast.error(err.message);
       }
     },
@@ -252,7 +253,7 @@ export default function DetailPage({
 
   return (
     <div
-      className="min-h-dvh"
+      className="min-h-[100dvh]"
       style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 2rem)" }}
     >
       {/* Sticky header */}

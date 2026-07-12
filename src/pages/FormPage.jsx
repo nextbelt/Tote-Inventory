@@ -116,7 +116,7 @@ export default function FormPage({ editTote, position, onBack, onSaved }) {
   // ------ Render ------
   return (
     <div
-      className="min-h-dvh"
+      className="min-h-[100dvh]"
       style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 2rem)" }}
     >
       <header

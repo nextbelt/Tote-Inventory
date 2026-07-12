@@ -20,4 +20,20 @@ module.exports = {
     "no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
     "react/prop-types": "off",
   },
+  overrides: [
+    {
+      files: ["**/*.test.js", "**/*.test.jsx"],
+      globals: {
+        describe: "readonly",
+        it: "readonly",
+        test: "readonly",
+        expect: "readonly",
+        beforeEach: "readonly",
+        afterEach: "readonly",
+        beforeAll: "readonly",
+        afterAll: "readonly",
+        vi: "readonly",
+      },
+    },
+  ],
 };

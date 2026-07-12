@@ -109,7 +109,7 @@ export default function GridPage({
   );
 
   return (
-    <div className="min-h-dvh pb-8" style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 2rem)" }}>
+    <div className="min-h-[100dvh] pb-8" style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 2rem)" }}>
       {/* Sticky header */}
       <header
         className="sticky top-0 z-30 border-b border-white/40 bg-white/80 backdrop-blur-xl"
