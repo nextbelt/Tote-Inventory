@@ -21,11 +21,9 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        # npm install instead of npm ci: this lockfile was generated on
-        # Windows and Linux npm hoists picomatch differently, which npm ci
-        # rejects. install re-resolves and proceeds; versions still come
-        # from the lockfile ranges.
-        run: npm install --no-audit --no-fund
+        # Lockfile must be regenerated with a FULL `npm install` (not
+        # --package-lock-only) or npm ci rejects its picomatch hoisting.
+        run: npm ci
 
       - name: Lint
         run: npm run lint
