@@ -10,6 +10,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import Sheet from "../components/Sheet";
 import { useToast } from "../components/Toast";
 import { useTotes } from "../hooks/useTotes";
 import { describePosition, WALLS } from "../utils/constants";
@@ -34,50 +35,6 @@ function wallSlots(wall) {
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
-/** Bottom sheet scaffold: scrollable, safe-area aware, Esc/backdrop close. */
-function Sheet({ title, onClose, children }) {
-  useEffect(() => {
-    const onKey = (e) => e.key === "Escape" && onClose();
-    document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-    };
-  }, [onClose]);
-
-  return (
-    <div className="fixed inset-0 z-40 flex items-end justify-center">
-      <button
-        type="button"
-        aria-label="Close"
-        onClick={onClose}
-        className="absolute inset-0 bg-black/40"
-      />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        className="relative max-h-[85dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-white p-4 shadow-2xl"
-        style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}
-      >
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="apple-subtitle text-lg">{title}</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="flex h-11 w-11 items-center justify-center rounded-xl text-gray-500"
-          >
-            <X className="h-5 w-5" aria-hidden="true" />
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
-
 export default function DetailPage({
   tote: initialTote,
   onBack,
@@ -85,7 +42,7 @@ export default function DetailPage({
   onDeleted,
   onShowInGarage,
 }) {
-  const { totes, totesByPosition, saveTote, deleteTote, moveTote, restoreTote } =
+  const { totes, totesByPosition, updateTote, deleteTote, moveTote, restoreTote } =
     useTotes();
   const toast = useToast();
 
@@ -113,7 +70,8 @@ export default function DetailPage({
       clearTimeout(saveTimerRef.current);
       latestRef.current.items = null;
       try {
-        await saveTote({ ...latestRef.current.tote, items: nextItems }, false);
+        // Items-only patch: can never clobber a concurrent move or rename
+        await updateTote(latestRef.current.tote.id, { items: nextItems });
         // Keep the overlay if a newer edit was staged while we were saving
         if (!latestRef.current.items) setPendingItems(null);
       } catch (err) {
@@ -121,7 +79,7 @@ export default function DetailPage({
         toast.error(err.message);
       }
     },
-    [saveTote, toast]
+    [updateTote, toast]
   );
 
   /** Show instantly, save soon (coalesces rapid +/- taps). */
@@ -148,10 +106,15 @@ export default function DetailPage({
       clearTimeout(saveTimerRef.current);
       const { tote: t, items: staged } = latestRef.current;
       if (staged) {
-        toteService.saveTote({ ...t, items: staged }, false).catch(() => {});
+        toteService.updateTote(t.id, { items: staged }).catch(() => {
+          // ToastProvider outlives this page, so the user still hears about it
+          toast.error(
+            `Your last change to “${t.name}” didn't save. Please check it.`
+          );
+        });
       }
     },
-    []
+    [toast]
   );
 
   // ------ quick add ------
@@ -222,10 +185,9 @@ export default function DetailPage({
       const { path } = describePosition(position);
       toast.show(`Moved to ${path}`, {
         actionLabel: "Undo",
+        // Position-only patch: undoing a move can't revert item edits
         onAction: () =>
-          moveTote({ ...tote, position }, from).catch((err) =>
-            toast.error(err.message)
-          ),
+          moveTote(tote, from).catch((err) => toast.error(err.message)),
       });
     } catch (err) {
       toast.error(err.message);

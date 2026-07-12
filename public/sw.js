@@ -46,15 +46,18 @@ self.addEventListener("fetch", (event) => {
   // Hashed assets + icons: cache first
   if (url.pathname.startsWith("/assets/") || url.pathname.startsWith("/icons/")) {
     event.respondWith(
-      caches.match(request).then(
-        (hit) =>
-          hit ||
-          fetch(request).then((res) => {
-            const copy = res.clone();
-            caches.open(CACHE).then((c) => c.put(request, copy));
-            return res;
-          })
-      )
+      caches
+        .match(request)
+        .then(
+          (hit) =>
+            hit ||
+            fetch(request).then((res) => {
+              const copy = res.clone();
+              caches.open(CACHE).then((c) => c.put(request, copy));
+              return res;
+            })
+        )
+        .catch(() => Response.error())
     );
   }
 });

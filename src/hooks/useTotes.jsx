@@ -65,10 +65,18 @@ export function ToteProvider({ children }) {
     setTotes((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  /** Move a tote to a new (empty) position. */
+  /** Patch specific fields (items, position, name) of one tote. */
+  const updateTote = useCallback(async (id, fields) => {
+    const savedTote = await toteService.updateTote(id, fields);
+    setTotes((prev) => prev.map((t) => (t.id === savedTote.id ? savedTote : t)));
+    return savedTote;
+  }, []);
+
+  /** Move a tote to a new (empty) position — patches position only, so a
+   *  concurrent item edit can never be clobbered or reverted. */
   const moveTote = useCallback(
-    (tote, position) => saveTote({ ...tote, position }, false),
-    [saveTote]
+    (tote, position) => updateTote(tote.id, { position }),
+    [updateTote]
   );
 
   /** Re-create a just-deleted tote (undo). Gets a fresh id. */
@@ -106,6 +114,7 @@ export function ToteProvider({ children }) {
       source,
       loadData,
       saveTote,
+      updateTote,
       deleteTote,
       moveTote,
       restoreTote,
@@ -118,6 +127,7 @@ export function ToteProvider({ children }) {
       source,
       loadData,
       saveTote,
+      updateTote,
       deleteTote,
       moveTote,
       restoreTote,

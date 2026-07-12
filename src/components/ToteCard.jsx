@@ -79,7 +79,7 @@ export default function ToteCard({
       onClick={onClick}
       aria-label={label}
       id={`slot-${position}`}
-      className={`flex w-full min-w-0 flex-col items-center px-0.5 py-1 ${
+      className={`flex min-h-[44px] w-full min-w-0 flex-col items-center justify-center px-0.5 py-1 ${
         highlighted ? "locate-highlight" : ""
       }`}
     >

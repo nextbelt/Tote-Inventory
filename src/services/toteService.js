@@ -1,4 +1,6 @@
 import { supabase } from "../lib/supabase";
+import { compressImage } from "../utils/images";
+import { dataUriToBlob, findEmbeddedPhotos, stripForCache } from "../utils/maintenance";
 
 // ---------------------------------------------------------------------------
 // Storage model
@@ -36,6 +38,20 @@ function writeJSON(key, value) {
 
 const getLocalTotes = () => readJSON(LOCAL_STORE_KEY);
 const saveLocalTotes = (totes) => writeJSON(LOCAL_STORE_KEY, totes);
+
+// Writes to the same tote are serialized so two in-flight saves (e.g. a
+// debounced item edit racing a move) can never finish out of order and
+// clobber each other's fields.
+const writeQueues = new Map();
+function enqueueWrite(key, task) {
+  const prev = writeQueues.get(key) || Promise.resolve();
+  const next = prev.catch(() => {}).then(task);
+  writeQueues.set(
+    key,
+    next.catch(() => {})
+  );
+  return next;
+}
 
 /** Convert Supabase/network failures into messages a person can act on. */
 function friendlyError(err, action) {
@@ -132,11 +148,53 @@ export const toteService = {
         .order("created_at", { ascending: true });
       if (error) throw error;
       const totes = data || [];
-      writeJSON(CACHE_KEY, totes);
+      // Strip embedded photos so a multi-MB legacy row can't overflow
+      // the localStorage quota and silently kill offline browsing
+      writeJSON(CACHE_KEY, stripForCache(totes));
       return { data: totes, source: "cloud" };
     } catch {
       return { data: readJSON(CACHE_KEY), source: "cache" };
     }
+  },
+
+  /**
+   * Patch specific fields of a tote (subset of name/position/items).
+   * Field-level patches mean an item edit can never clobber a concurrent
+   * move (and vice versa); per-tote queueing keeps writes ordered.
+   * @throws {Error} in cloud mode when the write fails (never shadow-saves)
+   */
+  async updateTote(id, fields) {
+    const patch = { ...fields, updated_at: new Date().toISOString() };
+    if (patch.name !== undefined) patch.name = patch.name.trim();
+    if (patch.items !== undefined && !Array.isArray(patch.items)) {
+      patch.items = [];
+    }
+
+    return enqueueWrite(id, async () => {
+      // ---------- local mode ----------
+      if (!supabase) {
+        const totes = getLocalTotes();
+        const idx = totes.findIndex((t) => t.id === id);
+        if (idx < 0) throw new Error("Couldn't find that tote to update.");
+        totes[idx] = { ...totes[idx], ...patch };
+        saveLocalTotes(totes);
+        return totes[idx];
+      }
+
+      // ---------- cloud mode ----------
+      try {
+        const { data, error } = await supabase
+          .from("totes")
+          .update(patch)
+          .eq("id", id)
+          .select()
+          .single();
+        if (error) throw error;
+        return data;
+      } catch (err) {
+        throw friendlyError(err, "save your changes");
+      }
+    });
   },
 
   /**
@@ -146,60 +204,47 @@ export const toteService = {
    * @throws {Error} in cloud mode when the write fails (never shadow-saves)
    */
   async saveTote(tote, isNew = false) {
+    if (!isNew) {
+      return this.updateTote(tote.id, {
+        name: tote.name,
+        position: tote.position,
+        items: tote.items,
+      });
+    }
+
     const toteData = {
       name: tote.name.trim(),
       position: tote.position,
       items: Array.isArray(tote.items) ? tote.items : [],
+      created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
     // ---------- local mode ----------
     if (!supabase) {
       const totes = getLocalTotes();
-      if (isNew) {
-        if (totes.some((t) => t.position === tote.position)) {
-          throw new Error(
-            "That spot already has a tote. Pick a different position."
-          );
-        }
-        const localTote = {
-          ...toteData,
-          id: Date.now(),
-          created_at: new Date().toISOString(),
-        };
-        totes.push(localTote);
-        saveLocalTotes(totes);
-        return localTote;
+      if (totes.some((t) => t.position === tote.position)) {
+        throw new Error(
+          "That spot already has a tote. Pick a different position."
+        );
       }
-      const idx = totes.findIndex((t) => t.id === tote.id);
-      if (idx < 0) throw new Error("Couldn't find that tote to update.");
-      totes[idx] = { ...totes[idx], ...toteData };
+      const localTote = { ...toteData, id: Date.now() };
+      totes.push(localTote);
       saveLocalTotes(totes);
-      return totes[idx];
+      return localTote;
     }
 
     // ---------- cloud mode ----------
     try {
-      let data, error;
-      if (isNew) {
-        toteData.created_at = new Date().toISOString();
-        ({ data, error } = await supabase
-          .from("totes")
-          .insert(toteData)
-          .select()
-          .single());
-      } else {
-        ({ data, error } = await supabase
-          .from("totes")
-          .update(toteData)
-          .eq("id", tote.id)
-          .select()
-          .single());
-      }
+      const { data, error } = await supabase
+        .from("totes")
+        .insert(toteData)
+        .select()
+        .single();
       if (error) throw error;
       return data;
     } catch (err) {
-      throw friendlyError(err, isNew ? "save the tote" : "save your changes");
+      throw friendlyError(err, "save the tote");
     }
   },
 
@@ -208,16 +253,18 @@ export const toteService = {
    * @throws {Error} in cloud mode when the delete fails
    */
   async deleteTote(id) {
-    if (!supabase) {
-      saveLocalTotes(getLocalTotes().filter((t) => t.id !== id));
-      return;
-    }
-    try {
-      const { error } = await supabase.from("totes").delete().eq("id", id);
-      if (error) throw error;
-    } catch (err) {
-      throw friendlyError(err, "delete the tote");
-    }
+    return enqueueWrite(id, async () => {
+      if (!supabase) {
+        saveLocalTotes(getLocalTotes().filter((t) => t.id !== id));
+        return;
+      }
+      try {
+        const { error } = await supabase.from("totes").delete().eq("id", id);
+        if (error) throw error;
+      } catch (err) {
+        throw friendlyError(err, "delete the tote");
+      }
+    });
   },
 
   /**
@@ -248,6 +295,68 @@ export const toteService = {
     } catch (err) {
       throw friendlyError(err, "upload the photo");
     }
+  },
+
+  /**
+   * Delete older duplicate rows (same position, stale copies created by a
+   * legacy bug). Only ever deletes the exact ids passed in — the caller
+   * shows the user what will be removed and gets confirmation first.
+   * @returns {number} rows removed
+   */
+  async cleanupDuplicates(duplicateGroups) {
+    if (!supabase) return 0;
+    const ids = duplicateGroups.flatMap((g) => g.older.map((t) => t.id));
+    if (ids.length === 0) return 0;
+    try {
+      const { error } = await supabase.from("totes").delete().in("id", ids);
+      if (error) throw error;
+      return ids.length;
+    } catch (err) {
+      throw friendlyError(err, "remove the duplicates");
+    }
+  },
+
+  /**
+   * Move legacy base64-embedded photos into Supabase Storage and update the
+   * owning rows to reference the URL instead. Uploads happen before the row
+   * update, so a failure part-way never loses a photo.
+   * @returns {number} photos migrated
+   */
+  async migrateEmbeddedPhotos(totes) {
+    if (!supabase) return 0;
+    const embedded = findEmbeddedPhotos(totes);
+    let migrated = 0;
+
+    // Group by tote so each row is updated once
+    const byTote = new Map();
+    embedded.forEach(({ tote, item }) => {
+      const entry = byTote.get(tote.id) || { tote, itemIds: new Set() };
+      entry.itemIds.add(item.id);
+      byTote.set(tote.id, entry);
+    });
+
+    for (const { tote, itemIds } of byTote.values()) {
+      const items = [];
+      for (const item of tote.items) {
+        if (!itemIds.has(item.id)) {
+          items.push(item);
+          continue;
+        }
+        const blob = dataUriToBlob(item.image);
+        const file = new File([blob], "photo.jpg", {
+          type: blob.type || "image/jpeg",
+        });
+        const compressed = await compressImage(file);
+        const url = await this.uploadImage(
+          compressed,
+          `migrated-${tote.id}-${item.id}-${Date.now()}.jpg`
+        );
+        items.push({ ...item, image: url });
+        migrated += 1;
+      }
+      await this.saveTote({ ...tote, items }, false);
+    }
+    return migrated;
   },
 
   /** Subscribe to real-time changes on the totes table. */

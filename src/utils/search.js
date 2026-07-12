@@ -79,7 +79,10 @@ export function searchTotes(totes, query) {
   const results = [];
   totes.forEach((tote) => {
     const items = Array.isArray(tote.items) ? tote.items : [];
-    const matchedItems = items.filter((item) => fuzzyMatch(q, item.name));
+    // Guard against malformed rows (a corrupt item must not crash the app)
+    const matchedItems = items.filter(
+      (item) => item && typeof item === "object" && fuzzyMatch(q, item.name)
+    );
     matchedItems.forEach((item) => results.push({ type: "item", tote, item }));
 
     const toteText = `${tote.name} ${tote.position}`;

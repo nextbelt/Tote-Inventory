@@ -1,4 +1,11 @@
-import { createContext, useCallback, useContext, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 const ToastContext = createContext(null);
 
@@ -36,8 +43,11 @@ export function ToastProvider({ children }) {
     [show]
   );
 
+  // Stable identity: consumers may use `toast` in effect dependency arrays
+  const value = useMemo(() => ({ show, error, dismiss }), [show, error, dismiss]);
+
   return (
-    <ToastContext.Provider value={{ show, error, dismiss }}>
+    <ToastContext.Provider value={value}>
       {children}
       {/* Above the bottom safe area so Safari's toolbar never covers it */}
       <div

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import WallPanel, { MiniMap } from "../components/GarageWalls";
 import SearchBar from "../components/SearchBar";
 import SearchResults from "../components/SearchResults";
+import TidyUpBanner from "../components/TidyUpBanner";
 import { useTotes } from "../hooks/useTotes";
 import { TOTAL_POSITIONS, WALLS } from "../utils/constants";
 import { searchTotes } from "../utils/search";
@@ -164,6 +165,7 @@ export default function GridPage({
             Saved on this device only (cloud sync not set up).
           </div>
         )}
+        <TidyUpBanner />
 
         {/* Search results replace the garage while typing */}
         {results ? (
