@@ -1,40 +1,59 @@
 import { Camera, ChevronLeft, Plus, Save, X } from "lucide-react";
 import { useState } from "react";
+import { useToast } from "../components/Toast";
 import { useTotes } from "../hooks/useTotes";
 import { toteService } from "../services/toteService";
+import { describePosition } from "../utils/constants";
+import { compressImage } from "../utils/images";
 import {
   validateImageFile,
   validateItemName,
   validateToteName,
 } from "../utils/validation";
 
+const newId = () =>
+  typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
 export default function FormPage({ editTote, position, onBack, onSaved }) {
-  const { saveTote } = useTotes();
+  const { saveTote, totesByPosition } = useTotes();
+  const toast = useToast();
 
   const [toteName, setToteName] = useState(editTote?.name || "");
   const [items, setItems] = useState(editTote?.items || []);
   const [currentItem, setCurrentItem] = useState({ name: "", image: null });
+  const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
 
   const isEditing = !!editTote;
+  const { path } = describePosition(position);
 
   // ------ Image upload ------
   const handleImageUpload = async (e) => {
     const file = e.target.files[0];
+    e.target.value = "";
     if (!file) return;
 
     const validation = validateImageFile(file);
     if (!validation.valid) {
-      alert(validation.error);
+      toast.error(validation.error);
       return;
     }
 
+    setUploading(true);
     try {
-      const fileName = `${Date.now()}-${file.name}`;
-      const imageUrl = await toteService.uploadImage(file, fileName);
+      const compressed = await compressImage(file);
+      const imageUrl = await toteService.uploadImage(
+        compressed,
+        `${Date.now()}-${compressed.name}`
+      );
       setCurrentItem((prev) => ({ ...prev, image: imageUrl }));
-    } catch {
-      alert("Failed to upload image. Please try again.");
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -45,7 +64,7 @@ export default function FormPage({ editTote, position, onBack, onSaved }) {
 
     setItems((prev) => [
       ...prev,
-      { ...currentItem, name: currentItem.name.trim(), id: Date.now() },
+      { ...currentItem, name: currentItem.name.trim(), id: newId(), qty: 1 },
     ]);
     setCurrentItem({ name: "", image: null });
   };
@@ -58,14 +77,23 @@ export default function FormPage({ editTote, position, onBack, onSaved }) {
   const handleSave = async () => {
     const nameCheck = validateToteName(toteName);
     if (!nameCheck.valid) {
-      alert(nameCheck.error);
+      setError(nameCheck.error);
       return;
     }
     if (!position) {
-      alert("Position is required.");
+      setError("Position is required.");
+      return;
+    }
+    // A slot can hold only one tote — catch it before the database does
+    const occupant = totesByPosition[position];
+    if (!isEditing && occupant) {
+      setError(
+        `${position} already holds “${occupant.name}”. Go back and pick an empty slot.`
+      );
       return;
     }
 
+    setError(null);
     setSaving(true);
     try {
       const toteData = {
@@ -78,8 +106,8 @@ export default function FormPage({ editTote, position, onBack, onSaved }) {
       };
       await saveTote(toteData, !isEditing);
       onSaved();
-    } catch {
-      alert("Failed to save tote. Please try again.");
+    } catch (err) {
+      setError(err.message);
     } finally {
       setSaving(false);
     }
@@ -88,162 +116,178 @@ export default function FormPage({ editTote, position, onBack, onSaved }) {
   // ------ Render ------
   return (
     <div
-      className="min-h-screen"
-      style={{
-        background: "linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)",
-      }}
+      className="min-h-dvh"
+      style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 2rem)" }}
     >
-      <div className="max-w-2xl mx-auto p-4 sm:p-6">
-        <div className="apple-card p-4 sm:p-6 md:p-8">
-          {/* Header */}
-          <div className="flex items-center justify-between mb-6 sm:mb-8">
-            <button
-              onClick={onBack}
-              className="flex items-center text-blue-600 hover:text-blue-700 transition-colors duration-200 group"
+      <header
+        className="sticky top-0 z-30 border-b border-white/40 bg-white/80 backdrop-blur-xl"
+        style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
+      >
+        <div className="mx-auto flex max-w-2xl items-center justify-between px-2 py-2">
+          <button
+            type="button"
+            onClick={onBack}
+            className="flex min-h-[44px] items-center gap-1 rounded-xl px-2 font-medium text-blue-600"
+          >
+            <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+            Back
+          </button>
+          <h1 className="apple-subtitle text-lg">
+            {isEditing ? "Edit Tote" : "New Tote"}
+          </h1>
+          <div className="w-16" />
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-2xl px-4 pt-4">
+        <div className="apple-card space-y-6 p-4 sm:p-6">
+          {/* Tote name */}
+          <div>
+            <label
+              htmlFor="tote-name"
+              className="mb-2 block text-sm font-semibold text-gray-700"
             >
-              <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5 mr-1 group-hover:-translate-x-1 transition-transform duration-200" />
-              <span className="text-sm sm:text-base font-medium">
-                Back to Grid
-              </span>
-            </button>
-            <h1 className="apple-subtitle text-lg sm:text-xl md:text-2xl">
-              {isEditing ? "Edit Tote" : "New Tote"}
-            </h1>
-            <div className="w-16 sm:w-20 md:w-24" />
+              Tote name
+            </label>
+            <input
+              id="tote-name"
+              type="text"
+              value={toteName}
+              onChange={(e) => setToteName(e.target.value)}
+              placeholder="e.g., Holiday Decorations"
+              maxLength={100}
+              autoComplete="off"
+              autoCapitalize="words"
+              autoFocus={!isEditing}
+              className="apple-input w-full"
+            />
           </div>
 
-          <div className="space-y-6 sm:space-y-8">
-            {/* Tote name */}
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2 sm:mb-3">
-                Tote Name
-              </label>
+          {/* Position (read-only) */}
+          <div>
+            <span className="mb-2 block text-sm font-semibold text-gray-700">
+              Where it goes
+            </span>
+            <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 font-semibold text-blue-800">
+              {position ? `${position} — ${path}` : "No position selected"}
+            </div>
+          </div>
+
+          {/* Add items */}
+          <div className="border-t border-gray-200 pt-5">
+            <h3 className="apple-subtitle mb-3 text-lg">Add items</h3>
+            <div className="flex gap-2">
               <input
                 type="text"
-                value={toteName}
-                onChange={(e) => setToteName(e.target.value)}
-                placeholder="e.g., Holiday Decorations"
+                value={currentItem.name}
+                onChange={(e) =>
+                  setCurrentItem((prev) => ({ ...prev, name: e.target.value }))
+                }
+                placeholder="Item name"
                 maxLength={100}
-                className="apple-input w-full"
+                autoComplete="off"
+                autoCapitalize="sentences"
+                aria-label="Item name"
+                className="apple-input min-w-0 flex-1"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") addItemToList();
+                }}
               />
-            </div>
-
-            {/* Position (read-only) */}
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2 sm:mb-3">
-                Selected Position
-              </label>
-              <div className="w-full px-4 sm:px-6 py-3 sm:py-4 bg-blue-50 border border-blue-200 rounded-xl sm:rounded-2xl text-blue-800 font-semibold text-sm sm:text-base">
-                {position || "No position selected"}
-              </div>
-            </div>
-
-            {/* Add items section */}
-            <div className="border-t border-gray-700/50 pt-6 sm:pt-8">
-              <h3 className="apple-subtitle text-lg sm:text-xl mb-4 sm:mb-6">
-                Add Items
-              </h3>
-              <div className="space-y-4 sm:space-y-6">
+              <label
+                className={`flex h-12 w-12 shrink-0 cursor-pointer items-center justify-center rounded-xl border-2 border-dashed ${
+                  currentItem.image
+                    ? "border-green-400 bg-green-50 text-green-600"
+                    : "border-gray-300 text-gray-400"
+                } ${uploading ? "animate-pulse" : ""}`}
+              >
+                <Camera className="h-5 w-5" aria-hidden="true" />
+                <span className="sr-only">
+                  {currentItem.image ? "Change photo" : "Add photo"}
+                </span>
                 <input
-                  type="text"
-                  value={currentItem.name}
-                  onChange={(e) =>
-                    setCurrentItem((prev) => ({
-                      ...prev,
-                      name: e.target.value,
-                    }))
-                  }
-                  placeholder="Item name"
-                  maxLength={100}
-                  className="apple-input w-full"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") addItemToList();
-                  }}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageUpload}
+                  className="hidden"
+                  disabled={uploading}
                 />
-
-                <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
-                  <label className="flex-1 cursor-pointer group">
-                    <div className="flex items-center justify-center px-4 sm:px-6 py-3 sm:py-4 border-2 border-dashed border-gray-300 rounded-xl sm:rounded-2xl hover:border-blue-500 hover:bg-blue-50 transition-all duration-200 group-hover:scale-105">
-                      <Camera className="w-4 h-4 sm:w-5 sm:h-5 mr-2 sm:mr-3 text-blue-600 group-hover:text-blue-700" />
-                      <span className="text-xs sm:text-sm text-gray-500 group-hover:text-blue-700">
-                        {currentItem.image ? "Change Photo" : "Add Photo"}
-                      </span>
-                    </div>
-                    <input
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp,image/gif"
-                      onChange={handleImageUpload}
-                      className="hidden"
-                    />
-                  </label>
-                  <button
-                    onClick={addItemToList}
-                    disabled={!currentItem.name.trim()}
-                    className="apple-button px-6 sm:px-8 py-3 sm:py-4 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center text-sm sm:text-base"
-                  >
-                    <Plus className="w-4 h-4 sm:w-5 sm:h-5 mr-2" />
-                    Add
-                  </button>
-                </div>
-
-                {currentItem.image && (
-                  <div className="flex justify-center">
-                    <img
-                      src={currentItem.image}
-                      alt="Preview"
-                      className="w-32 h-32 sm:w-40 sm:h-40 object-cover rounded-xl sm:rounded-2xl border border-gray-300 shadow-lg"
-                    />
-                  </div>
-                )}
-              </div>
+              </label>
+              <button
+                type="button"
+                onClick={addItemToList}
+                disabled={!currentItem.name.trim() || uploading}
+                aria-label="Add item to list"
+                className="apple-button flex h-12 w-12 shrink-0 items-center justify-center !p-0 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Plus className="h-5 w-5" aria-hidden="true" />
+              </button>
             </div>
 
-            {/* Items list */}
-            {items.length > 0 && (
-              <div className="border-t border-gray-200 pt-6 sm:pt-8">
-                <h3 className="apple-subtitle text-lg sm:text-xl mb-4 sm:mb-6">
-                  Items ({items.length})
-                </h3>
-                <div className="space-y-3 sm:space-y-4">
-                  {items.map((item) => (
-                    <div
-                      key={item.id}
-                      className="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-white border border-gray-200 rounded-xl sm:rounded-2xl shadow-sm"
-                    >
-                      {item.image && (
-                        <img
-                          src={item.image}
-                          alt={item.name}
-                          className="w-16 h-16 sm:w-20 sm:h-20 object-cover rounded-lg sm:rounded-xl border border-gray-300"
-                        />
-                      )}
-                      <span className="flex-1 font-semibold text-gray-800 text-sm sm:text-base">
-                        {item.name}
-                      </span>
-                      <button
-                        onClick={() => removeItem(item.id)}
-                        className="p-2 sm:p-3 text-red-500 hover:text-red-600 hover:bg-red-50 rounded-lg sm:rounded-xl transition-all duration-200"
-                      >
-                        <X className="w-4 h-4 sm:w-5 sm:h-5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
+            {currentItem.image && (
+              <div className="mt-3 flex justify-center">
+                <img
+                  src={currentItem.image}
+                  alt="Preview of new item"
+                  className="h-28 w-28 rounded-xl border border-gray-200 object-cover shadow"
+                />
               </div>
             )}
-
-            {/* Save button */}
-            <button
-              onClick={handleSave}
-              disabled={!toteName.trim() || !position || saving}
-              className="apple-button w-full py-4 sm:py-5 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center text-sm sm:text-base"
-            >
-              <Save className="w-4 h-4 sm:w-5 sm:h-5 mr-2 sm:mr-3" />
-              {saving ? "Saving…" : isEditing ? "Update Tote" : "Save Tote"}
-            </button>
           </div>
+
+          {/* Items list */}
+          {items.length > 0 && (
+            <div className="border-t border-gray-200 pt-5">
+              <h3 className="apple-subtitle mb-3 text-lg">
+                Items ({items.length})
+              </h3>
+              <ul className="space-y-2">
+                {items.map((item) => (
+                  <li
+                    key={item.id}
+                    className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-2.5 shadow-sm"
+                  >
+                    {item.image && (
+                      <img
+                        src={item.image}
+                        alt={item.name}
+                        className="h-12 w-12 rounded-lg border border-gray-200 object-cover"
+                      />
+                    )}
+                    <span className="min-w-0 flex-1 truncate font-semibold text-gray-800">
+                      {item.name}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeItem(item.id)}
+                      aria-label={`Remove ${item.name}`}
+                      className="flex h-11 w-11 items-center justify-center rounded-lg text-red-500"
+                    >
+                      <X className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {error && (
+            <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+              {error}
+            </p>
+          )}
+
+          {/* Save */}
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={!toteName.trim() || !position || saving || uploading}
+            className="apple-button flex w-full items-center justify-center py-4 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Save className="mr-2 h-5 w-5" aria-hidden="true" />
+            {saving ? "Saving…" : isEditing ? "Save Changes" : "Save Tote"}
+          </button>
         </div>
-      </div>
+      </main>
     </div>
   );
 }

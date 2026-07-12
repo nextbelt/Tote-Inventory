@@ -1,101 +1,120 @@
 import { Plus } from "lucide-react";
 
-export default function ToteCard({ position, tote, onClick }) {
-  const hasItems = tote && tote.items && tote.items.length > 0;
-  const itemCount = hasItems ? tote.items.length : 0;
+function itemCountOf(tote) {
+  if (!tote || !Array.isArray(tote.items)) return 0;
+  return tote.items.length;
+}
 
-  return (
-    <div className="flex flex-col items-center p-1 sm:p-2">
-      <div className="text-xs font-semibold text-gray-700 mb-1 sm:mb-2">
-        {position}
-      </div>
-      <div
+/**
+ * A tappable tote (or empty slot) drawn as the real thing: black bin,
+ * yellow lid. Rendered as a real <button> so keyboards and screen readers
+ * work, with a ≥44px touch target.
+ *
+ * variant "compact" – small, used on the front-wall rack grid
+ * variant "wide"    – full-width, used on side-wall shelves
+ */
+export default function ToteCard({
+  position,
+  tote,
+  onClick,
+  variant = "compact",
+  highlighted = false,
+}) {
+  const count = itemCountOf(tote);
+  const hasItems = count > 0;
+  const label = tote
+    ? `${position}: ${tote.name}, ${count === 1 ? "1 item" : `${count} items`}`
+    : `${position}: empty slot, add a tote`;
+
+  if (variant === "wide") {
+    return (
+      <button
+        type="button"
         onClick={onClick}
-        className="relative cursor-pointer transform hover:scale-110 transition-all duration-300 hover:shadow-2xl group"
+        aria-label={label}
+        id={`slot-${position}`}
+        className={`w-full min-h-[64px] px-1 py-1 group ${
+          highlighted ? "locate-highlight" : ""
+        }`}
       >
-        <div className="relative">
-          {/* Hover glow backdrop */}
-          <div className="absolute inset-0 bg-gradient-to-r from-yellow-400 via-yellow-500 to-amber-400 rounded-lg opacity-0 group-hover:opacity-25 blur-xl transition-opacity duration-200" />
-
-          {/* Lid — yellow */}
-          <div className="relative w-14 h-2 sm:w-20 sm:h-2.5 md:w-28 md:h-3 bg-gradient-to-br from-yellow-300 via-yellow-400 to-amber-500 rounded-t-lg border border-yellow-600/40 shadow-lg">
-            <div className="absolute inset-0 bg-gradient-to-br from-white/30 to-transparent rounded-t-lg" />
-            {/* Lid latches */}
-            <div className="absolute left-1.5 sm:left-2 md:left-3 top-0.5 w-2 sm:w-3 md:w-4 h-1 md:h-1.5 bg-yellow-700/50 rounded-sm" />
-            <div className="absolute right-1.5 sm:right-2 md:right-3 top-0.5 w-2 sm:w-3 md:w-4 h-1 md:h-1.5 bg-yellow-700/50 rounded-sm" />
-          </div>
-
-          {/* Body — black */}
-          <div className="relative w-14 h-6 sm:w-20 sm:h-8 md:w-28 md:h-10 bg-gradient-to-br from-gray-800 via-gray-900 to-black border border-gray-700/60 shadow-xl transition-all duration-300">
-            <div className="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent" />
-
-            {/* Item count badge */}
-            {hasItems && (
-              <div className="absolute -top-1 -right-1 w-4 h-4 sm:w-5 sm:h-5 md:w-6 md:h-6 bg-gradient-to-r from-yellow-400 to-amber-500 rounded-full border-2 border-white shadow-lg flex items-center justify-center z-20">
-                <span className="text-gray-900 text-xs font-bold">
-                  {itemCount}
+        <div className="flex items-center gap-2">
+          <span className="w-10 shrink-0 text-xs font-bold text-gray-500">
+            {position}
+          </span>
+          {tote ? (
+            <span className="flex-1">
+              {/* Lid */}
+              <span className="block h-2.5 rounded-t-lg border border-yellow-600/40 bg-gradient-to-br from-yellow-300 via-yellow-400 to-amber-500" />
+              {/* Body */}
+              <span className="relative flex h-12 items-center justify-between border-x border-b border-gray-700/60 bg-gradient-to-br from-gray-800 via-gray-900 to-black px-3 rounded-b-sm">
+                <span className="truncate text-sm font-bold text-yellow-300">
+                  {tote.name}
                 </span>
-              </div>
-            )}
-
-            {/* Fullness indicator bars — yellow for occupied */}
-            {hasItems && (
-              <div className="absolute bottom-1 left-1 right-1 flex gap-0.5 z-[15]">
-                {Array.from({ length: Math.min(itemCount, 4) }).map((_, i) => (
-                  <div
-                    key={i}
-                    className="flex-1 h-0.5 sm:h-1 bg-gradient-to-r from-yellow-400 to-amber-500 rounded-full opacity-90"
-                  />
-                ))}
-                {itemCount > 4 && (
-                  <div className="w-1 h-0.5 sm:h-1 bg-gradient-to-r from-orange-500 to-red-500 rounded-full" />
-                )}
-              </div>
-            )}
-
-            {/* Empty tote indicator — dashed outline inside */}
-            {tote && !hasItems && (
-              <div className="absolute inset-1 sm:inset-1.5 border border-dashed border-gray-600 rounded-sm" />
-            )}
-
-            {/* Vertical ridges */}
-            <div className="absolute left-0.5 sm:left-1 top-0 h-full w-px bg-gradient-to-b from-gray-600/40 to-gray-800/40" />
-            <div className="absolute left-1.5 sm:left-3 top-0 h-full w-px bg-gradient-to-b from-gray-600/30 to-gray-800/30" />
-            <div className="absolute right-1.5 sm:right-3 top-0 h-full w-px bg-gradient-to-b from-gray-600/30 to-gray-800/30" />
-            <div className="absolute right-0.5 sm:right-1 top-0 h-full w-px bg-gradient-to-b from-gray-600/40 to-gray-800/40" />
-
-            {/* Centre content */}
-            {tote ? (
-              <div className="absolute inset-0.5 sm:inset-1 flex flex-col justify-center items-center text-xs overflow-hidden z-10">
-                <div className="font-bold text-center text-xs leading-tight truncate w-full px-0.5 sm:px-1 text-yellow-300">
-                  {tote.name.length > 8
-                    ? tote.name.substring(0, 8) + "…"
-                    : tote.name}
-                </div>
-                {hasItems ? (
-                  <div className="text-gray-900 text-xs font-bold mt-0.5 bg-yellow-400 px-1 rounded">
-                    {itemCount} items
-                  </div>
-                ) : (
-                  <div className="text-gray-500 text-xs italic mt-0.5">
-                    empty
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="absolute inset-0 flex items-center justify-center z-10">
-                <Plus className="w-2 h-2 sm:w-3 sm:h-3 md:w-4 md:h-4 text-gray-500 opacity-60 group-hover:text-yellow-400 group-hover:opacity-100 transition-all duration-200" />
-              </div>
-            )}
-          </div>
-
-          {/* Bottom rim — black */}
-          <div className="w-14 sm:w-20 md:w-28 h-0.5 sm:h-1 bg-gradient-to-r from-gray-800 via-black to-gray-800 rounded-b-sm shadow-lg" />
-
-          {/* Hover glow overlay — yellow tint */}
-          <div className="absolute inset-0 rounded-lg bg-gradient-to-r from-yellow-400/0 via-amber-400/0 to-yellow-400/0 group-hover:from-yellow-400/10 group-hover:via-amber-400/15 group-hover:to-yellow-400/10 transition-all duration-200 pointer-events-none" />
+                <span
+                  className={`ml-2 shrink-0 rounded-full px-2 py-0.5 text-xs font-bold ${
+                    hasItems
+                      ? "bg-yellow-400 text-gray-900"
+                      : "bg-gray-700 text-gray-300 italic"
+                  }`}
+                >
+                  {hasItems ? `${count} item${count === 1 ? "" : "s"}` : "empty"}
+                </span>
+              </span>
+            </span>
+          ) : (
+            <span className="flex h-12 flex-1 items-center justify-center gap-1 rounded-lg border-2 border-dashed border-gray-300 text-sm text-gray-400 group-active:border-blue-400 group-active:text-blue-500">
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              Add tote
+            </span>
+          )}
         </div>
-      </div>
-    </div>
+      </button>
+    );
+  }
+
+  // ---- compact (front-wall rack) ----
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      id={`slot-${position}`}
+      className={`flex w-full min-w-0 flex-col items-center px-0.5 py-1 ${
+        highlighted ? "locate-highlight" : ""
+      }`}
+    >
+      <span className="mb-0.5 text-[10px] sm:text-xs font-semibold text-gray-600">
+        {position}
+      </span>
+      <span className="relative block w-full max-w-[7rem]">
+        {/* Lid — yellow */}
+        <span className="relative block h-1.5 sm:h-2.5 rounded-t border border-yellow-600/40 bg-gradient-to-br from-yellow-300 via-yellow-400 to-amber-500" />
+        {/* Body — black */}
+        <span className="relative block h-7 sm:h-9 border-x border-b border-gray-700/60 bg-gradient-to-br from-gray-800 via-gray-900 to-black">
+          {hasItems && (
+            <span className="absolute -right-1 -top-2 z-10 flex h-4 min-w-4 sm:h-5 sm:min-w-5 items-center justify-center rounded-full border border-white bg-gradient-to-r from-yellow-400 to-amber-500 px-0.5 text-[10px] sm:text-xs font-bold text-gray-900 shadow">
+              {count}
+            </span>
+          )}
+          {tote ? (
+            <span className="absolute inset-0 flex items-center justify-center overflow-hidden px-0.5">
+              <span className="truncate text-[9px] sm:text-[11px] font-bold leading-tight text-yellow-300">
+                {tote.name}
+              </span>
+            </span>
+          ) : (
+            <span className="absolute inset-0 flex items-center justify-center">
+              <Plus
+                className="h-3 w-3 sm:h-4 sm:w-4 text-gray-500"
+                aria-hidden="true"
+              />
+            </span>
+          )}
+          {tote && !hasItems && (
+            <span className="absolute inset-0.5 rounded-sm border border-dashed border-gray-600" />
+          )}
+        </span>
+      </span>
+    </button>
   );
 }
