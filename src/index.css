@@ -8,20 +8,25 @@
   --apple-gray: #8E8E93;
   --apple-light-gray: #F2F2F7;
   --apple-dark-gray: #1C1C1E;
-  --apple-medium-gray: #2C2C2E;
   --apple-green: #34C759;
   --apple-red: #FF3B30;
-  --apple-orange: #FF9500;
-  --apple-purple: #AF52DE;
-  --apple-pink: #FF2D92;
   --apple-yellow: #FFCC00;
-  --apple-indigo: #5856D6;
+
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
 }
 
 *,
 *::before,
 *::after {
   box-sizing: border-box;
+}
+
+html {
+  /* Respect iOS Dynamic Type without breaking layout */
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
@@ -32,34 +37,58 @@ body {
   -moz-osx-font-smoothing: grayscale;
   background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
   min-height: 100vh;
+  min-height: 100dvh;
+  overscroll-behavior-y: none;
+}
+
+button,
+[role="button"] {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation; /* no 300ms delay / double-tap zoom */
+}
+
+button {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 3px solid var(--apple-blue);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 /* ---- Apple-style components ---- */
+/* In the components layer so Tailwind utilities (pl-10 etc.) can override */
+@layer components {
 
 .apple-button {
   background: var(--apple-blue);
   color: white;
   border: none;
-  border-radius: 8px;
+  border-radius: 12px;
   padding: 12px 24px;
+  min-height: 48px;
   font-weight: 600;
   font-size: 17px;
-  transition: all 0.2s ease;
+  transition: background 0.2s ease, transform 0.2s ease;
   cursor: pointer;
 }
 
-.apple-button:hover {
-  background: #0056CC;
-  transform: translateY(-1px);
+@media (hover: hover) {
+  .apple-button:hover {
+    background: #0056CC;
+    transform: translateY(-1px);
+  }
 }
 
 .apple-button:active {
-  transform: translateY(0);
+  transform: scale(0.98);
 }
 
 .apple-card {
-  background: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 16px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
@@ -68,11 +97,15 @@ body {
 .apple-input {
   background: rgba(255, 255, 255, 0.9);
   border: 1px solid rgba(0, 0, 0, 0.1);
-  border-radius: 8px;
+  border-radius: 12px;
   padding: 12px 16px;
+  min-height: 48px;
+  /* ≥16px so iOS Safari never auto-zooms the page on focus */
   font-size: 17px;
   font-weight: 400;
-  transition: all 0.2s ease;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 .apple-input:focus {
@@ -82,7 +115,6 @@ body {
 }
 
 .apple-title {
-  font-size: 48px;
   font-weight: 700;
   letter-spacing: -0.02em;
   line-height: 1.1;
@@ -90,15 +122,59 @@ body {
 }
 
 .apple-subtitle {
-  font-size: 28px;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--apple-dark-gray);
 }
 
-.apple-body {
-  font-size: 17px;
-  font-weight: 400;
-  line-height: 1.5;
-  color: var(--apple-gray);
+} /* end @layer components */
+
+/* ---- Wall carousel (scroll-snap) ---- */
+
+.wall-carousel {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain; /* don't trigger Safari's back gesture */
+}
+
+.wall-carousel::-webkit-scrollbar {
+  display: none;
+}
+
+.wall-panel {
+  flex: 0 0 100%;
+  scroll-snap-align: center;
+  scroll-snap-stop: always;
+}
+
+/* ---- "Show me" highlight ---- */
+
+@keyframes locate-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.9), 0 0 18px 6px rgba(0, 122, 255, 0.45); }
+  50%      { box-shadow: 0 0 0 6px rgba(0, 122, 255, 0.55), 0 0 26px 10px rgba(0, 122, 255, 0.25); }
+}
+
+.locate-highlight {
+  animation: locate-pulse 1.2s ease-in-out infinite;
+  border-radius: 10px;
+}
+
+/* ---- Motion preferences ---- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .locate-highlight {
+    animation: none;
+    box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.9);
+  }
 }

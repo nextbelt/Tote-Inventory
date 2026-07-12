@@ -35,7 +35,10 @@ Thumbs.db
 .cache/
 .parcel-cache/
 
-# Images dropped in project root
-*.jpeg
-*.jpg
-*.png
+# Images dropped in project root (public/ assets stay tracked)
+/*.jpeg
+/*.jpg
+/*.png
+/public/wood-texture.png
+# Added by code-review-graph
+.code-review-graph/
