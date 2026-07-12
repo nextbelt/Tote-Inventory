@@ -15,7 +15,9 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # Match local dev (Node 22 / npm 10.9) — older npm mis-validates
+          # this lockfile's nested entries during `npm ci`
+          node-version: "22"
           cache: "npm"
 
       - name: Install dependencies
