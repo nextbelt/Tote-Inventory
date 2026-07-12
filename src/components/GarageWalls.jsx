@@ -97,19 +97,26 @@ function WorkbenchSection({ fixture, ...slotProps }) {
 
 function WallShelfSection({ fixture, ...slotProps }) {
   const { totesByPosition, onSlotClick, highlightPosition } = slotProps;
+  const columns = fixture.rows[0]?.length || 1;
   return (
-    <div className="mx-auto w-full max-w-sm">
-      {fixture.slots.map((pos) => (
-        <div key={pos} className="mb-1">
-          <ToteCard
-            variant="wide"
-            position={pos}
-            tote={totesByPosition[pos]}
-            onClick={() => onSlotClick(pos)}
-            highlighted={highlightPosition === pos}
-          />
+    <div
+      className={`mx-auto w-full ${columns > 1 ? "max-w-lg" : "max-w-sm"}`}
+    >
+      {fixture.rows.map((row, i) => (
+        <div key={i} className="mb-1">
+          {row.length === 1 ? (
+            <ToteCard
+              variant="wide"
+              position={row[0]}
+              tote={totesByPosition[row[0]]}
+              onClick={() => onSlotClick(row[0])}
+              highlighted={highlightPosition === row[0]}
+            />
+          ) : (
+            <SlotGrid row={row} {...slotProps} />
+          )}
           {/* Shelf plank with brackets */}
-          <div className="ml-12">
+          <div className={row.length === 1 ? "ml-12" : ""}>
             <div className={`h-1.5 sm:h-2 rounded-sm ${WOOD} shadow`} />
             <div className="flex justify-between px-6" aria-hidden="true">
               <div className="h-2 w-1 rounded-b-sm bg-amber-800/70" />

@@ -7,8 +7,14 @@
 // see buildWalls().
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_LAYOUT = { leftShelves: 5, rightShelves: 5 };
+export const DEFAULT_LAYOUT = {
+  leftShelves: 5,
+  leftColumns: 1,
+  rightShelves: 5,
+  rightColumns: 1,
+};
 export const MAX_SIDE_SHELVES = 12;
+export const MAX_SIDE_COLUMNS = 4;
 
 // Front-wall rack layout: columns A/B and F/G have 5 levels; C/D/E sit at
 // floor level around the workbench (levels 4–5 only). null = no slot.
@@ -63,48 +69,79 @@ const FRONT_WALL = {
   ],
 };
 
-const range = (prefix, count) =>
-  Array.from({ length: count }, (_, i) => `${prefix}${i + 1}`);
+// Side-wall slot IDs: column 1 keeps the legacy ID ("LW3"); extra columns
+// get a letter suffix ("LW3B" = shelf 3, second slot across).
+export function sideSlotId(prefix, shelf, column) {
+  return column === 1
+    ? `${prefix}${shelf}`
+    : `${prefix}${shelf}${String.fromCharCode(64 + column)}`;
+}
 
-/** Highest shelf index in use for a side-wall prefix ("LW"/"RW"). */
-function highestOccupied(prefix, occupiedPositions) {
-  let max = 0;
+/** Parse a side-wall slot: "LW3B" → { shelf: 3, column: 2 }, else null. */
+export function parseSideSlot(prefix, position) {
+  const m = new RegExp(`^${prefix}(\\d+)([B-Z])?$`).exec(position);
+  if (!m) return null;
+  return {
+    shelf: parseInt(m[1], 10),
+    column: m[2] ? m[2].charCodeAt(0) - 64 : 1,
+  };
+}
+
+/** Highest shelf/column in use for a side-wall prefix ("LW"/"RW"). */
+function sideUsage(prefix, occupiedPositions) {
+  let shelves = 0;
+  let columns = 1;
   occupiedPositions.forEach((pos) => {
-    const m = new RegExp(`^${prefix}(\\d+)$`).exec(pos);
-    if (m) max = Math.max(max, parseInt(m[1], 10));
+    const parsed = parseSideSlot(prefix, pos);
+    if (parsed) {
+      shelves = Math.max(shelves, parsed.shelf);
+      columns = Math.max(columns, parsed.column);
+    }
   });
-  return max;
+  return { shelves, columns };
+}
+
+function sideWallFixture(id, prefix, layout, layoutKeys, occupiedPositions) {
+  const used = sideUsage(prefix, occupiedPositions);
+  const shelves = Math.max(
+    1,
+    layout[layoutKeys.shelves] ?? DEFAULT_LAYOUT[layoutKeys.shelves],
+    used.shelves
+  );
+  const columns = Math.max(
+    1,
+    layout[layoutKeys.columns] ?? DEFAULT_LAYOUT[layoutKeys.columns],
+    used.columns
+  );
+  const rows = [];
+  for (let s = 1; s <= shelves; s++) {
+    const row = [];
+    for (let c = 1; c <= columns; c++) row.push(sideSlotId(prefix, s, c));
+    rows.push(row);
+  }
+  return { id, label: "Wall shelf", kind: "wallShelf", rows };
 }
 
 /**
- * Build the three walls from the user's layout settings. A shelf that still
- * holds a tote is always rendered, even if the settings say fewer shelves —
- * changing a preference can never hide inventory.
+ * Build the three walls from the user's layout settings (shelf levels and
+ * totes-per-shelf columns for each side wall). A slot that still holds a
+ * tote is always rendered, even if the settings shrink — changing a
+ * preference can never hide inventory.
  */
 export function buildWalls(layout = DEFAULT_LAYOUT, occupiedPositions = []) {
-  const leftCount = Math.max(
-    1,
-    layout.leftShelves ?? DEFAULT_LAYOUT.leftShelves,
-    highestOccupied("LW", occupiedPositions)
-  );
-  const rightCount = Math.max(
-    1,
-    layout.rightShelves ?? DEFAULT_LAYOUT.rightShelves,
-    highestOccupied("RW", occupiedPositions)
-  );
-
   return [
     {
       id: "left",
       label: "Left wall",
       shortLabel: "Left",
       fixtures: [
-        {
-          id: "left-shelf",
-          label: "Wall shelf",
-          kind: "wallShelf",
-          slots: range("LW", leftCount),
-        },
+        sideWallFixture(
+          "left-shelf",
+          "LW",
+          layout,
+          { shelves: "leftShelves", columns: "leftColumns" },
+          occupiedPositions
+        ),
       ],
     },
     FRONT_WALL,
@@ -113,12 +150,13 @@ export function buildWalls(layout = DEFAULT_LAYOUT, occupiedPositions = []) {
       label: "Right wall",
       shortLabel: "Right",
       fixtures: [
-        {
-          id: "right-shelf",
-          label: "Wall shelf",
-          kind: "wallShelf",
-          slots: range("RW", rightCount),
-        },
+        sideWallFixture(
+          "right-shelf",
+          "RW",
+          layout,
+          { shelves: "rightShelves", columns: "rightColumns" },
+          occupiedPositions
+        ),
       ],
     },
   ];
@@ -134,8 +172,8 @@ export function wallPositions(walls) {
 // Static defaults — the rendered app uses buildWalls() with live settings,
 // but validation and tests can rely on the default shape.
 export const WALLS = buildWalls(DEFAULT_LAYOUT);
-export const LEFT_WALL_POSITIONS = WALLS[0].fixtures[0].slots;
-export const RIGHT_WALL_POSITIONS = WALLS[2].fixtures[0].slots;
+export const LEFT_WALL_POSITIONS = WALLS[0].fixtures[0].rows.flat();
+export const RIGHT_WALL_POSITIONS = WALLS[2].fixtures[0].rows.flat();
 export const SHELF_POSITIONS = wallPositions(WALLS);
 export const TOTAL_POSITIONS = SHELF_POSITIONS.length;
 
@@ -150,12 +188,12 @@ const FRONT_INDEX = (() => {
 })();
 
 /**
- * Wall id for a position, by pattern — works for any shelf number, not just
- * the currently configured count (older data must always resolve).
+ * Wall id for a position, by pattern — works for any shelf/column, not just
+ * the currently configured counts (older data must always resolve).
  */
 export function getWallIdForPosition(position) {
-  if (/^LW\d+$/.test(position)) return "left";
-  if (/^RW\d+$/.test(position)) return "right";
+  if (parseSideSlot("LW", position)) return "left";
+  if (parseSideSlot("RW", position)) return "right";
   if (FRONT_INDEX[position]) return "front";
   return null;
 }
@@ -168,17 +206,33 @@ export function getWallForPosition(position) {
 
 /**
  * Human-friendly location for a position, e.g.
- *   "A3"  → { wallId: "front", path: "Front wall · Left rack · Level 3" }
- *   "LW7" → { wallId: "left",  path: "Left wall · Shelf 7" }
+ *   "A3"   → { wallId: "front", path: "Front wall · Left rack · Level 3" }
+ *   "LW7"  → { wallId: "left",  path: "Left wall · Shelf 7" }
+ *   "RW2C" → { wallId: "right", path: "Right wall · Shelf 2 · Slot C" }
  */
 export function describePosition(position) {
-  const wallId = getWallIdForPosition(position);
-  if (!wallId) return { wallId: null, path: position };
-  const level = parseInt(String(position).replace(/\D/g, ""), 10);
-  if (wallId === "left") return { wallId, path: `Left wall · Shelf ${level}` };
-  if (wallId === "right") return { wallId, path: `Right wall · Shelf ${level}` };
+  const side = (prefix, label) => {
+    const parsed = parseSideSlot(prefix, position);
+    if (!parsed) return null;
+    const slot =
+      parsed.column > 1
+        ? ` · Slot ${String.fromCharCode(64 + parsed.column)}`
+        : "";
+    return `${label} · Shelf ${parsed.shelf}${slot}`;
+  };
+
+  const left = side("LW", "Left wall");
+  if (left) return { wallId: "left", path: left };
+  const right = side("RW", "Right wall");
+  if (right) return { wallId: "right", path: right };
+
   const fixture = FRONT_INDEX[position];
-  return { wallId, path: `Front wall · ${fixture.label} · Level ${level}` };
+  if (!fixture) return { wallId: null, path: position };
+  const level = parseInt(String(position).replace(/\D/g, ""), 10);
+  return {
+    wallId: "front",
+    path: `Front wall · ${fixture.label} · Level ${level}`,
+  };
 }
 
 export const MAX_TOTE_NAME_LENGTH = 100;
