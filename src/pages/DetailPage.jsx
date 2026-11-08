@@ -47,6 +47,7 @@ import {
 import AutoGrowTextarea from "../components/AutoGrowTextarea";
 import DuplicateHint from "../components/DuplicateHint";
 import ParsePreview from "../components/ParsePreview";
+import { tagColor } from "../utils/tagColors";
 
 const newId = () =>
   typeof crypto !== "undefined" && crypto.randomUUID
@@ -916,7 +917,7 @@ export default function DetailPage({
                 {toteTags.map((tag) => (
                   <li
                     key={tag}
-                    className="inline-flex min-h-[32px] items-center rounded-full bg-blue-50 px-3 text-sm font-semibold text-blue-700 dark:bg-blue-950 dark:text-blue-300"
+                    className={`inline-flex min-h-[32px] items-center rounded-full px-3 text-sm font-semibold ${tagColor(tag).chip}`}
                   >
                     {tag}
                   </li>
