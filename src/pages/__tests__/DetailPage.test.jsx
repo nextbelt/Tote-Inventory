@@ -258,7 +258,8 @@ describe("DetailPage keeps local edits as operations on top of the live store", 
     let finishDelete;
     const deleting = new Promise((r) => (finishDelete = r));
     const deleteTote = vi.fn(() => deleting);
-    ext.set((s) => ({ ...s, deleteTote }));
+    const restoreTote = vi.fn().mockResolvedValue(tote);
+    ext.set((s) => ({ ...s, deleteTote, restoreTote }));
     const user = userEvent.setup();
     render(<DetailPage {...props} />);
 
@@ -276,11 +277,20 @@ describe("DetailPage keeps local edits as operations on top of the live store", 
       await deleting;
     });
     expect(props.onDeleted).toHaveBeenCalled();
-    // The Undo snapshot carries the staged +1
     const [, opts] = toastMock.show.mock.calls.at(-1);
     expect(opts.actionLabel).toBe("Undo");
     expect(updateItems).not.toHaveBeenCalled();
     expect(toastMock.error).not.toHaveBeenCalled();
+
+    // Undo hands restoreTote the tote's ID (so the SAME row comes back, not
+    // a re-created one) together with the staged +1
+    await act(async () => {
+      await opts.onAction();
+    });
+    expect(restoreTote).toHaveBeenCalledTimes(1);
+    const snapshot = restoreTote.mock.calls[0][0];
+    expect(snapshot).toMatchObject({ id: 1, name: "Camping Gear", position: "B3" });
+    expect(snapshot.items).toEqual([expect.objectContaining({ id: "i1", qty: 3 })]);
   });
 
   /** Start a delete that stays in flight until the test settles it. */

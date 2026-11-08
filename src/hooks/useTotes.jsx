@@ -16,6 +16,7 @@ import {
 } from "../services/toteService";
 import { buildWalls, DEFAULT_LAYOUT, wallPositions } from "../utils/constants";
 import { reconcileQtyOp } from "../utils/qtyOps";
+import { isReservedPosition } from "../utils/reservedRows";
 
 const ToteContext = createContext(null);
 
@@ -51,6 +52,20 @@ function writeSyncedAt(ms) {
   } catch {
     // localStorage may be full or unavailable; the in-memory value still works
   }
+}
+
+/**
+ * `totes` with the row a write handed back in place of its old copy. A row
+ * at a reserved "__" position (tombstone, settings, bin) is not a tote: it is
+ * dropped instead, so no write path can ever put one on a wall, in search or
+ * in a count. The service refuses such writes itself; this is the backstop.
+ */
+function withSavedRow(prev, row) {
+  if (!row) return prev;
+  if (isReservedPosition(row.position)) {
+    return prev.filter((t) => t.id !== row.id);
+  }
+  return prev.map((t) => (t.id === row.id ? row : t));
 }
 
 export function ToteProvider({ children }) {
@@ -341,7 +356,7 @@ export function ToteProvider({ children }) {
     const savedTote = await toteService.saveTote(tote, isNew);
     setTotes((prev) => {
       if (isNew) return [...prev, savedTote];
-      return prev.map((t) => (t.id === savedTote.id ? savedTote : t));
+      return withSavedRow(prev, savedTote);
     });
     return savedTote;
   }, []);
@@ -358,7 +373,7 @@ export function ToteProvider({ children }) {
   /** Patch specific fields (items, position, name) of one tote. */
   const updateTote = useCallback(async (id, fields) => {
     const savedTote = await toteService.updateTote(id, fields);
-    setTotes((prev) => prev.map((t) => (t.id === savedTote.id ? savedTote : t)));
+    setTotes((prev) => withSavedRow(prev, savedTote));
     return savedTote;
   }, []);
 
@@ -367,7 +382,7 @@ export function ToteProvider({ children }) {
    *  same tote at the same time. */
   const updateItems = useCallback(async (id, mutate) => {
     const savedTote = await toteService.updateItems(id, mutate);
-    setTotes((prev) => prev.map((t) => (t.id === savedTote.id ? savedTote : t)));
+    setTotes((prev) => withSavedRow(prev, savedTote));
     return savedTote;
   }, []);
 
@@ -464,7 +479,7 @@ export function ToteProvider({ children }) {
   /** Put a removed item back into its tote (or `targetToteId`). */
   const restoreRemovedItem = useCallback(async (entryId, targetToteId) => {
     const savedTote = await toteService.restoreRemovedItem(entryId, targetToteId);
-    setTotes((prev) => prev.map((t) => (t.id === savedTote.id ? savedTote : t)));
+    setTotes((prev) => withSavedRow(prev, savedTote));
     return savedTote;
   }, []);
 

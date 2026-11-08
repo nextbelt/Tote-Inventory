@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { addItem, adjustQty } from "../../utils/itemOps";
 
 // Local (localStorage) mode — the Supabase module is aliased to null in tests.
 const STORE = "totes-inventory";
@@ -137,5 +138,42 @@ describe("local mode: removed-items bin", () => {
     const saved = await toteService.restoreRemovedItem(entry.id, 2);
     expect(saved.id).toBe(2);
     expect(saved.items).toEqual([lantern]);
+  });
+});
+
+describe("local mode: updateItems never writes a reserved row", () => {
+  const glue = { id: "i3", name: "Glue", qty: 1 };
+
+  it("a +/- tap or item add on a soft-deleted tote reports 'couldn't find' and leaves the tombstone unchanged", async () => {
+    // The other phone deleted tote 1 while this one still had it open
+    await toteService.deleteTote(1);
+    const before = read().find((t) => t.id === 1);
+    await expect(toteService.updateItems(1, adjustQty("i1", 1))).rejects.toThrow(/find that tote/i);
+    await expect(toteService.updateItems(1, addItem(glue))).rejects.toThrow(/find that tote/i);
+    expect(read().find((t) => t.id === 1)).toEqual(before);
+
+    // Still hidden, still restorable with its items intact
+    const { data, deleted } = await toteService.getTotes();
+    expect(data.map((t) => t.id)).toEqual([2]);
+    expect(deleted.map((d) => d.id)).toEqual([1]);
+    expect(deleted[0].items).toEqual([lantern]);
+  });
+
+  it("the settings and bin rows can't be edited as totes, while the bin's own writes still work", async () => {
+    seed([camping, { id: 10, name: "cfg", position: "__config__", items: { leftShelves: 3 }, updated_at: T0 }]);
+    await expect(toteService.updateItems(10, () => [])).rejects.toThrow(/find that tote/i);
+    expect(read().find((t) => t.id === 10).items).toEqual({ leftShelves: 3 });
+
+    await toteService.recordRemovedItems(camping, [lantern]);
+    const binId = read().find((t) => t.position === "__removed_items__").id;
+    await expect(toteService.updateItems(binId, () => [])).rejects.toThrow(/find that tote/i);
+    expect(read().find((t) => t.id === binId).items).toHaveLength(1);
+
+    // The bin's internal append / drop path is unaffected by the guard
+    await toteService.recordRemovedItems(camping, [glue]);
+    expect(read().find((t) => t.id === binId).items).toHaveLength(2);
+    const [entry] = await toteService.listRemovedItems();
+    await toteService.restoreRemovedItem(entry.id);
+    expect(read().find((t) => t.id === binId).items).toHaveLength(1);
   });
 });
