@@ -15,6 +15,20 @@ export const MAX_PARSED_QTY = 999;
 const SEPARATORS = /[\r\n,;、，；]+/;
 const TRAILING_PERIODS = /[.。\s]+$/;
 
+// "1,000 screws" / "1,5 m cable": a comma BETWEEN two digits belongs to the
+// number, not to the list. Swap those for a placeholder before splitting and
+// put them back afterwards. (Lookahead only — older iPhones can't even parse
+// regex lookbehind, which would blank the whole app.)
+const NUMBER_COMMA = /(\d)([,，])(?=\d)/g;
+const COMMA_MARK = "\u0000";
+const COMMA_MARK_WIDE = "\u0001";
+const shieldNumberCommas = (text) =>
+  text.replace(NUMBER_COMMA, (_, digit, comma) =>
+    digit + (comma === "," ? COMMA_MARK : COMMA_MARK_WIDE)
+  );
+const unshieldNumberCommas = (text) =>
+  text.split(COMMA_MARK).join(",").split(COMMA_MARK_WIDE).join("，");
+
 // "3x tarp", "3 x tarp", "3× tarp". The x must be followed by a space and then
 // a non-digit: "2x4 lumber", "4 x 4 posts" are sizes, "3XL shirts" is a size.
 const LEADING_X = /^(\d+)\s*[x×]\s+(\D.*)$/i;
@@ -65,8 +79,8 @@ export function parseItems(text) {
   const overflow = [];
   if (typeof text !== "string") return { items, sources, skipped, overflow };
 
-  for (const raw of text.split(SEPARATORS)) {
-    const entry = raw.trim().replace(TRAILING_PERIODS, "").trim();
+  for (const raw of shieldNumberCommas(text).split(SEPARATORS)) {
+    const entry = unshieldNumberCommas(raw).trim().replace(TRAILING_PERIODS, "").trim();
     if (!entry) continue;
     const { name, qty } = readCount(entry);
     const check = validateItemName(name);

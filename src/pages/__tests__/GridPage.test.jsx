@@ -107,3 +107,39 @@ describe("GridPage restock button", () => {
     expect(screen.queryByText(/Last updated/)).not.toBeInTheDocument();
   });
 });
+
+describe("GridPage search", () => {
+  const searchFor = (term) =>
+    render(
+      <GridPage
+        onSelectTote={vi.fn()}
+        searchTerm={term}
+        onSearchChange={vi.fn()}
+        mode="garage"
+        onModeChange={vi.fn()}
+        onAddTote={vi.fn()}
+        activeWallId="front"
+        onWallChange={vi.fn()}
+        onClearHighlight={vi.fn()}
+      />
+    );
+
+  beforeEach(() => {
+    // Two rows claim A1; the walls show only one of them (the mock keeps the
+    // last, like useTotes keeps the newest). The hidden one must not be found.
+    state.totes = [
+      { id: 1, name: "Old copy", position: "A1", updated_at: "2026-01-01T00:00:00.000Z", items: [{ id: 11, name: "Hammer" }] },
+      { id: 2, name: "Paint", position: "A1", updated_at: "2026-06-01T00:00:00.000Z", items: [{ id: 12, name: "Brush" }] },
+    ];
+  });
+
+  it("finds items in the tote the walls show", () => {
+    searchFor("brush");
+    expect(screen.getAllByText(/Paint/).length).toBeGreaterThan(0);
+  });
+
+  it("never surfaces a hidden duplicate row", () => {
+    searchFor("hammer");
+    expect(screen.queryByText(/Old copy/)).not.toBeInTheDocument();
+  });
+});
