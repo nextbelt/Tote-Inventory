@@ -271,24 +271,116 @@ describe("DetailPage keeps local edits as operations on top of the live store", 
     expect(toastMock.error).not.toHaveBeenCalled();
   });
 
-  it("saves the held taps if the delete fails", async () => {
-    const { db } = setup([lantern]);
-    const deleteTote = vi.fn(async () => {
-      throw new Error("Couldn't delete that tote. Please try again.");
+  /** Start a delete that stays in flight until the test settles it. */
+  async function startPendingDelete(user) {
+    let settle;
+    const deleting = new Promise((resolve, reject) => {
+      settle = { resolve, reject };
     });
+    const deleteTote = vi.fn(() => deleting);
     ext.set((s) => ({ ...s, deleteTote }));
+    await user.click(screen.getByRole("button", { name: "Delete tote" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    expect(deleteTote).toHaveBeenCalledWith(1);
+    return { settle, deleting };
+  }
+
+  it("holds the taps while the delete is pending and saves them only once it fails", async () => {
+    const { db } = setup([lantern]);
     const user = userEvent.setup();
     render(<DetailPage {...props} />);
 
     await user.click(screen.getByRole("button", { name: "Add one Lantern" }));
-    await user.click(screen.getByRole("button", { name: "Delete tote" }));
-    await user.click(screen.getByRole("button", { name: "Delete" }));
+    const { settle, deleting } = await startPendingDelete(user);
 
-    await waitFor(() =>
-      expect(toastMock.error).toHaveBeenCalledWith("Couldn't delete that tote. Please try again.")
-    );
+    await new Promise((r) => setTimeout(r, 900)); // past the debounce
+    expect(updateItems).not.toHaveBeenCalled(); // held, not saved
+
+    await act(async () => {
+      settle.reject(new Error("Couldn't delete that tote. Please try again."));
+      await deleting.catch(() => {});
+    });
+    expect(toastMock.error).toHaveBeenCalledWith("Couldn't delete that tote. Please try again.");
     await waitFor(() => expect(updateItems).toHaveBeenCalledTimes(1), { timeout: 2500 });
     expect(db.items).toEqual([{ ...lantern, qty: 3 }]);
+  });
+
+  it("locking the phone mid-delete doesn't save the held taps", async () => {
+    setup([lantern]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Add one Lantern" }));
+    const { settle, deleting } = await startPendingDelete(user);
+
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    try {
+      await act(async () => {
+        document.dispatchEvent(new Event("visibilitychange"));
+        window.dispatchEvent(new Event("pagehide"));
+      });
+    } finally {
+      visibility.mockRestore();
+    }
+    expect(updateItems).not.toHaveBeenCalled();
+
+    await act(async () => {
+      settle.resolve();
+      await deleting;
+    });
+    expect(updateItems).not.toHaveBeenCalled();
+    expect(toastMock.error).not.toHaveBeenCalled();
+  });
+
+  it("a tap made while the delete is in flight is held too", async () => {
+    setup([lantern]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    const { settle, deleting } = await startPendingDelete(user);
+    await user.click(screen.getByRole("button", { name: "Add one Lantern" }));
+
+    await new Promise((r) => setTimeout(r, 900)); // past the debounce
+    expect(updateItems).not.toHaveBeenCalled();
+
+    await act(async () => {
+      settle.resolve();
+      await deleting;
+    });
+    expect(updateItems).not.toHaveBeenCalled();
+    expect(toastMock.error).not.toHaveBeenCalled();
+  });
+
+  it("pagehide on its own also saves staged taps right away", async () => {
+    const { db } = setup([lantern]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Add one Lantern" }));
+    await act(async () => {
+      window.dispatchEvent(new Event("pagehide"));
+    });
+    expect(updateItems).toHaveBeenCalledTimes(1);
+    expect(db.items).toEqual([{ ...lantern, qty: 3 }]);
+  });
+
+  it("stops listening for background events once the page is gone", async () => {
+    setup([lantern]);
+    const user = userEvent.setup();
+    const view = render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Add one Lantern" }));
+    view.unmount(); // the unmount flush saves the tap once
+    await waitFor(() => expect(updateItems).toHaveBeenCalledTimes(1));
+
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    try {
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("pagehide"));
+    } finally {
+      visibility.mockRestore();
+    }
+    expect(updateItems).toHaveBeenCalledTimes(1);
   });
 
   it("shows the service's friendly error when an op fails and drops the optimistic overlay", async () => {
