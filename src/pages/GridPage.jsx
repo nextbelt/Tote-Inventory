@@ -10,13 +10,10 @@ import TidyUpBanner from "../components/TidyUpBanner";
 import { useTotes } from "../hooks/useTotes";
 import { getWallIdForPosition } from "../utils/constants";
 import { restockItems } from "../utils/insights";
+import { prefersReducedMotion } from "../utils/motion";
 import { searchTotes } from "../utils/search";
 import RelativeTime from "../components/RelativeTime";
 import { latestModified, toteModifiedDate } from "../utils/time";
-
-const prefersReducedMotion = () =>
-  typeof window !== "undefined" &&
-  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 export default function GridPage({
   onSelectTote,

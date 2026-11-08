@@ -33,10 +33,16 @@ const tote = (items) => ({
   items,
 });
 
+// Search text and Garage / All totes mode live in App (so Back keeps your
+// place); GridPage is controlled, so render it the way App does.
 function renderGrid() {
   return render(
     <GridPage
       onSelectTote={vi.fn()}
+      searchTerm=""
+      onSearchChange={vi.fn()}
+      mode="garage"
+      onModeChange={vi.fn()}
       onAddTote={vi.fn()}
       activeWallId="front"
       onWallChange={vi.fn()}
