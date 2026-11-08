@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 
 const STORE_KEY = "totes-inventory";
@@ -81,6 +81,91 @@ describe("App", () => {
     await user.type(search, "zzzzqqq");
 
     expect(await screen.findByText(/Nothing matching/i)).toBeInTheDocument();
+  });
+
+  it("keeps the search text after opening a result and coming back", async () => {
+    seedTotes();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByLabelText(/^B3: Camping Gear/);
+    const search = screen.getByLabelText("Search totes and items");
+    await user.type(search, "lantern");
+
+    await user.click(await screen.findByRole("button", { name: /Lantern/ }));
+    expect(
+      await screen.findByRole("heading", { name: "Camping Gear" })
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Garage" }));
+
+    expect(await screen.findByLabelText("Search totes and items")).toHaveValue(
+      "lantern"
+    );
+    expect(screen.getByRole("list", { name: "Search results" })).toBeInTheDocument();
+    expect(screen.getByText("Lantern")).toBeInTheDocument();
+  });
+
+  it("keeps the All totes mode after opening a tote and coming back", async () => {
+    seedTotes();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByLabelText(/^B3: Camping Gear/);
+    await user.click(screen.getByRole("button", { name: "All totes" }));
+
+    const list = await screen.findByRole("list", { name: "All totes" });
+    await user.click(within(list).getByRole("button", { name: /Holiday Lights/ }));
+    await screen.findByRole("heading", { name: "Holiday Lights" });
+
+    await user.click(screen.getByRole("button", { name: "Garage" }));
+
+    expect(await screen.findByRole("list", { name: "All totes" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All totes" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+  });
+
+  it("restores the scroll position when coming back to the results", async () => {
+    seedTotes();
+    const user = userEvent.setup();
+    const scrollTo = vi.fn();
+    const originalScrollTo = window.scrollTo;
+    window.scrollTo = scrollTo;
+    try {
+      render(<App />);
+      await screen.findByLabelText(/^B3: Camping Gear/);
+      await user.type(screen.getByLabelText("Search totes and items"), "lantern");
+
+      window.scrollY = 420;
+      await user.click(await screen.findByRole("button", { name: /Lantern/ }));
+      await screen.findByRole("heading", { name: "Camping Gear" });
+      window.scrollY = 0;
+
+      await user.click(screen.getByRole("button", { name: "Garage" }));
+      await screen.findByRole("list", { name: "Search results" });
+      expect(scrollTo).toHaveBeenCalledWith(0, 420);
+    } finally {
+      window.scrollTo = originalScrollTo;
+      window.scrollY = 0;
+    }
+  });
+
+  it("clears the search when 'Show me' is used from a tote page", async () => {
+    seedTotes();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByLabelText(/^B3: Camping Gear/);
+    await user.type(screen.getByLabelText("Search totes and items"), "lantern");
+    await user.click(await screen.findByRole("button", { name: /Lantern/ }));
+    await screen.findByRole("heading", { name: "Camping Gear" });
+
+    await user.click(screen.getByRole("button", { name: /Show me/ }));
+
+    expect(await screen.findByLabelText("Search totes and items")).toHaveValue("");
+    expect(screen.queryByRole("list", { name: "Search results" })).not.toBeInTheDocument();
   });
 
   it("opens a tote, bumps a quantity, and persists the change", async () => {

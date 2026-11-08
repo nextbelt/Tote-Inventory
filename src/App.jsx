@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ToastProvider } from "./components/Toast";
 import { ToteProvider } from "./hooks/useTotes";
@@ -14,16 +14,26 @@ export default function ToteInventoryApp() {
   const [selectedPosition, setSelectedPosition] = useState("");
   const [activeWallId, setActiveWallId] = useState("front");
   const [highlightPosition, setHighlightPosition] = useState(null);
+  // Search state lives here (GridPage unmounts on every view change) so Back
+  // from a tote lands on the same results, mode and scroll position.
+  const [searchTerm, setSearchTerm] = useState("");
+  const [mode, setMode] = useState("garage"); // "garage" | "list"
+  const gridScrollRef = useRef(0);
+  // Which item a search result pointed at (original id value, number or string)
+  const [highlightItemId, setHighlightItemId] = useState(undefined);
 
   const handleBack = () => {
     setView("garage");
     setSelectedTote(null);
     setEditingTote(null);
     setSelectedPosition("");
+    setHighlightItemId(undefined);
   };
 
-  const handleSelectTote = (tote) => {
+  const handleSelectTote = (tote, { itemId } = {}) => {
+    gridScrollRef.current = window.scrollY || 0;
     setSelectedTote(tote);
+    setHighlightItemId(itemId);
     setView("detail");
   };
 
@@ -50,8 +60,13 @@ export default function ToteInventoryApp() {
     const wall = getWallForPosition(position);
     setActiveWallId(wall ? wall.id : "front");
     setHighlightPosition(position);
+    // Land on the garage, not on a search that was still open
+    setSearchTerm("");
+    setMode("garage");
+    gridScrollRef.current = 0;
     setView("garage");
     setSelectedTote(null);
+    setHighlightItemId(undefined);
   };
 
   const clearHighlight = useCallback(() => setHighlightPosition(null), []);
@@ -63,6 +78,11 @@ export default function ToteInventoryApp() {
           {view === "garage" && (
             <GridPage
               onSelectTote={handleSelectTote}
+              searchTerm={searchTerm}
+              onSearchChange={setSearchTerm}
+              mode={mode}
+              onModeChange={setMode}
+              initialScrollY={gridScrollRef.current}
               onAddTote={handleAddTote}
               activeWallId={activeWallId}
               onWallChange={handleWallChange}
@@ -73,6 +93,7 @@ export default function ToteInventoryApp() {
           {view === "detail" && selectedTote && (
             <DetailPage
               tote={selectedTote}
+              highlightItemId={highlightItemId}
               onBack={handleBack}
               onEdit={handleEditTote}
               onDeleted={handleBack}

@@ -1,16 +1,33 @@
 import { MapPin, Package, SearchX } from "lucide-react";
-import { describePosition } from "../utils/constants";
+import { WALLS, describeSpot } from "../utils/constants";
+import { itemQty } from "../utils/itemOps";
+import { highlightMatches } from "../utils/search";
 
-function itemQty(item) {
-  const q = Number(item?.qty);
-  return Number.isFinite(q) ? q : 1;
+/** Text with the words that matched the query in bold. */
+function Highlighted({ text, query }) {
+  return highlightMatches(text, query).map((seg, i) =>
+    seg.match ? (
+      <strong key={i} className="font-extrabold">
+        {seg.text}
+      </strong>
+    ) : (
+      <span key={i}>{seg.text}</span>
+    )
+  );
 }
 
 /**
- * Search results as a tappable list. Tapping a row opens the tote;
- * "Show me" jumps to the right wall and highlights the exact slot.
+ * Search results as a tappable list. Tapping a row opens the tote (an item
+ * row also tells the tote page which item matched); "Show me" jumps to the
+ * right wall and highlights the exact slot.
  */
-export default function SearchResults({ results, query, onOpenTote, onShowMe }) {
+export default function SearchResults({
+  results,
+  query,
+  walls = WALLS,
+  onOpenTote,
+  onShowMe,
+}) {
   if (results.length === 0) {
     return (
       <div className="apple-card flex flex-col items-center gap-2 p-8 text-center text-gray-500 dark:text-gray-400">
@@ -29,14 +46,19 @@ export default function SearchResults({ results, query, onOpenTote, onShowMe }) 
     <ul className="space-y-2" aria-label="Search results">
       {results.map((result) => {
         const { tote, item, type } = result;
-        const { path } = describePosition(tote.position);
+        const path = describeSpot(tote.position, walls);
+        const qty = type === "item" ? itemQty(item) : 1;
         const key = `${tote.id}-${type === "item" ? item.id : "tote"}`;
         return (
           <li key={key} className="apple-card overflow-hidden">
             <div className="flex items-center">
               <button
                 type="button"
-                onClick={() => onOpenTote(tote)}
+                onClick={() =>
+                  type === "item"
+                    ? onOpenTote(tote, { itemId: item.id })
+                    : onOpenTote(tote)
+                }
                 className="flex min-h-[64px] min-w-0 flex-1 items-center gap-3 p-3 text-left"
               >
                 {type === "item" && item.image ? (
@@ -52,15 +74,25 @@ export default function SearchResults({ results, query, onOpenTote, onShowMe }) 
                   </span>
                 )}
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate font-semibold text-gray-900 dark:text-gray-100">
-                    {type === "item" ? item.name : tote.name}
-                    {type === "item" && itemQty(item) !== 1 && (
-                      <span className="ml-1.5 text-sm font-normal text-gray-500 dark:text-gray-400">
-                        × {itemQty(item)}
+                  <span className="flex items-baseline gap-1.5 font-semibold text-gray-900 dark:text-gray-100">
+                    <span className="min-w-0 truncate">
+                      <Highlighted
+                        text={type === "item" ? item.name : tote.name}
+                        query={query}
+                      />
+                    </span>
+                    {type === "item" && qty === 0 && (
+                      <span className="shrink-0 text-sm font-normal text-amber-700 dark:text-amber-400">
+                        out of stock
+                      </span>
+                    )}
+                    {type === "item" && qty > 1 && (
+                      <span className="shrink-0 text-sm font-normal text-gray-500 dark:text-gray-400">
+                        × {qty}
                       </span>
                     )}
                   </span>
-                  <span className="block truncate text-sm text-gray-500 dark:text-gray-400">
+                  <span className="block text-sm text-gray-500 dark:text-gray-400">
                     {type === "item" ? `${tote.name} · ${path}` : path}
                   </span>
                 </span>
@@ -80,3 +112,4 @@ export default function SearchResults({ results, query, onOpenTote, onShowMe }) 
     </ul>
   );
 }
+

@@ -18,6 +18,11 @@ const prefersReducedMotion = () =>
 
 export default function GridPage({
   onSelectTote,
+  searchTerm,
+  onSearchChange,
+  mode,
+  onModeChange,
+  initialScrollY = 0,
   onAddTote,
   activeWallId,
   onWallChange,
@@ -34,8 +39,6 @@ export default function GridPage({
     totalPositions,
     loadData,
   } = useTotes();
-  const [searchTerm, setSearchTerm] = useState("");
-  const [mode, setMode] = useState("garage"); // "garage" | "list"
   const [editWall, setEditWall] = useState(null); // "left" | "right" | null
   const carouselRef = useRef(null);
   const scrollDebounceRef = useRef(null);
@@ -55,6 +58,15 @@ export default function GridPage({
   }, []);
 
   const searchActive = Boolean(searchTerm.trim());
+
+  // Back from a tote: put the page back where it was (results list, tote
+  // list, or garage). Runs once, as soon as there is content to scroll.
+  const scrollRestoredRef = useRef(false);
+  useLayoutEffect(() => {
+    if (scrollRestoredRef.current || loading) return;
+    scrollRestoredRef.current = true;
+    if (initialScrollY > 0) window.scrollTo(0, initialScrollY);
+  }, [loading, initialScrollY]);
 
   // Whenever the carousel (re)appears, land on the active wall instantly
   useLayoutEffect(() => {
@@ -106,8 +118,8 @@ export default function GridPage({
   };
 
   const handleShowMe = (position) => {
-    setSearchTerm("");
-    setMode("garage");
+    onSearchChange("");
+    onModeChange("garage");
     const wallId = getWallIdForPosition(position);
     if (wallId) onWallChange(wallId, position);
   };
@@ -157,7 +169,7 @@ export default function GridPage({
               </button>
             </div>
           </div>
-          <SearchBar value={searchTerm} onChange={setSearchTerm} />
+          <SearchBar value={searchTerm} onChange={onSearchChange} />
           {lastUpdated && (
             <p className="mt-1.5 flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
               <Clock className="h-3.5 w-3.5" aria-hidden="true" />
@@ -190,7 +202,8 @@ export default function GridPage({
           <SearchResults
             results={results}
             query={searchTerm}
-            onOpenTote={(tote) => onSelectTote(tote)}
+            walls={walls}
+            onOpenTote={onSelectTote}
             onShowMe={handleShowMe}
           />
         ) : loading ? (
@@ -210,7 +223,7 @@ export default function GridPage({
                 <button
                   key={value}
                   type="button"
-                  onClick={() => setMode(value)}
+                  onClick={() => onModeChange(value)}
                   aria-pressed={mode === value}
                   className={`min-h-[44px] flex-1 rounded-lg text-sm font-semibold transition-colors ${
                     mode === value
