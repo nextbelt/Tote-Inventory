@@ -1,6 +1,7 @@
 import { Clock, CloudOff, HardDrive, Package, RefreshCw, Wrench } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import WallPanel, { MiniMap } from "../components/GarageWalls";
+import RestockSheet from "../components/RestockSheet";
 import SearchBar from "../components/SearchBar";
 import SearchResults from "../components/SearchResults";
 import ShelfEditor from "../components/ShelfEditor";
@@ -8,6 +9,7 @@ import ThemeToggle from "../components/ThemeToggle";
 import TidyUpBanner from "../components/TidyUpBanner";
 import { useTotes } from "../hooks/useTotes";
 import { getWallIdForPosition } from "../utils/constants";
+import { restockItems } from "../utils/insights";
 import { searchTotes } from "../utils/search";
 import RelativeTime from "../components/RelativeTime";
 import { latestModified, toteModifiedDate } from "../utils/time";
@@ -40,6 +42,7 @@ export default function GridPage({
     loadData,
   } = useTotes();
   const [editWall, setEditWall] = useState(null); // "left" | "right" | null
+  const [restockOpen, setRestockOpen] = useState(false);
   const carouselRef = useRef(null);
   const scrollDebounceRef = useRef(null);
 
@@ -126,6 +129,10 @@ export default function GridPage({
 
   const results = searchTerm.trim() ? searchTotes(totes, searchTerm) : null;
   const occupied = Object.keys(totesByPosition).length;
+  const restockCount = useMemo(
+    () => restockItems(Object.values(totesByPosition)).length,
+    [totesByPosition]
+  );
   const lastUpdated = latestModified(totes);
   const sortedTotes = [...totes].sort((a, b) =>
     a.position.localeCompare(b.position, undefined, { numeric: true })
@@ -154,6 +161,18 @@ export default function GridPage({
               <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-300">
                 {occupied}/{totalPositions} spots
               </span>
+              {restockCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setRestockOpen(true)}
+                  className="flex min-h-[44px] shrink-0 items-center rounded-xl px-1.5 text-xs font-semibold text-amber-700 dark:text-amber-300"
+                >
+                  Restock
+                  <span className="ml-1 rounded-full bg-amber-100 px-1.5 py-0.5 dark:bg-amber-950">
+                    {restockCount}
+                  </span>
+                </button>
+              )}
               <ThemeToggle />
               <button
                 type="button"
@@ -354,6 +373,13 @@ export default function GridPage({
           </>
         )}
       </main>
+
+      {restockOpen && (
+        <RestockSheet
+          onClose={() => setRestockOpen(false)}
+          onSelectTote={onSelectTote}
+        />
+      )}
 
       {editWall && (
         <ShelfEditor wallId={editWall} onClose={() => setEditWall(null)} />
