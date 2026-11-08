@@ -35,6 +35,7 @@ function readStore() {
 describe("App", () => {
   beforeEach(() => {
     localStorage.clear();
+    window.history.replaceState(null, "", "/");
   });
 
   it("renders the garage with wall tabs and seeded totes", async () => {
