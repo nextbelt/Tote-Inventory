@@ -3,6 +3,16 @@
 //    constraint; an old bug silently inserted stale copies)
 //  - photos embedded as base64 data-URIs inside the items JSONB (multi-MB
 //    rows that slow every load and overflow the offline cache)
+//
+// Reserved "__" rows (layout settings, the removed-items bin, deleted-tote
+// tombstones) are never legacy problems and are skipped by every detector.
+
+import { isReservedPosition } from "./reservedRows";
+
+const realTotes = (totes) =>
+  (Array.isArray(totes) ? totes : []).filter(
+    (tote) => tote && !isReservedPosition(tote.position)
+  );
 
 const time = (t) => new Date(t.updated_at || t.created_at || 0).getTime();
 
@@ -13,7 +23,7 @@ const time = (t) => new Date(t.updated_at || t.created_at || 0).getTime();
  */
 export function findDuplicates(totes) {
   const byPosition = new Map();
-  totes.forEach((tote) => {
+  realTotes(totes).forEach((tote) => {
     const list = byPosition.get(tote.position) || [];
     list.push(tote);
     byPosition.set(tote.position, list);
@@ -33,7 +43,7 @@ export function findDuplicates(totes) {
 /** Items whose photo is an embedded data-URI (not a storage URL). */
 export function findEmbeddedPhotos(totes) {
   const found = [];
-  totes.forEach((tote) => {
+  realTotes(totes).forEach((tote) => {
     (Array.isArray(tote.items) ? tote.items : []).forEach((item) => {
       if (typeof item.image === "string" && item.image.startsWith("data:")) {
         found.push({ tote, item });
