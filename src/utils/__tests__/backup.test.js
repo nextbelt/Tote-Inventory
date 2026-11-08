@@ -64,8 +64,8 @@ describe("buildCsv", () => {
     const csv = buildCsv([tote()], describe_);
     expect(csv.charCodeAt(0)).toBe(0xfeff);
     const lines = csv.slice(1).split("\r\n");
-    expect(lines[0]).toBe("Tote,Location,Item,Quantity,Photo");
-    expect(lines[1]).toBe("Tools,Spot LW1,Hammer,2,");
+    expect(lines[0]).toBe("Tote,Location,Item,Quantity,Photo,Tags,Note");
+    expect(lines[1]).toBe("Tools,Spot LW1,Hammer,2,,,");
     expect(csv.endsWith("\r\n")).toBe(true);
   });
 
@@ -79,7 +79,7 @@ describe("buildCsv", () => {
       ],
       describe_
     );
-    expect(csv).toContain('"A, ""B""",Spot LW1,"x\ny",1,http://i/1.jpg');
+    expect(csv).toContain('"A, ""B""",Spot LW1,"x\ny",1,http://i/1.jpg,,');
   });
 
   it("defaults missing qty to 1, keeps 0, and emits a row for an empty tote", () => {
@@ -93,10 +93,10 @@ describe("buildCsv", () => {
     );
     const lines = csv.slice(1).trimEnd().split("\r\n");
     expect(lines).toEqual([
-      "Tote,Location,Item,Quantity,Photo",
-      "Tools,Spot LW1,a,1,",
-      "Tools,Spot LW1,b,0,",
-      "Empty,Spot LW2,,,",
+      "Tote,Location,Item,Quantity,Photo,Tags,Note",
+      "Tools,Spot LW1,a,1,,,",
+      "Tools,Spot LW1,b,0,,,",
+      "Empty,Spot LW2,,,,,",
     ]);
   });
 
@@ -117,11 +117,35 @@ describe("buildCsv", () => {
     );
     expect(csv.length).toBeLessThan(1000);
     expect(csv.slice(1).trimEnd().split("\r\n")).toEqual([
-      "Tote,Location,Item,Quantity,Photo",
-      "Tools,Spot LW1,web,1,https://x.co/a.jpg",
-      "Tools,Spot LW1,old,1,(embedded photo)",
-      "Tools,Spot LW1,odd,1,",
-      "Tools,Spot LW1,none,1,",
+      "Tote,Location,Item,Quantity,Photo,Tags,Note",
+      "Tools,Spot LW1,web,1,https://x.co/a.jpg,,",
+      "Tools,Spot LW1,old,1,(embedded photo),,",
+      "Tools,Spot LW1,odd,1,,,",
+      "Tools,Spot LW1,none,1,,,",
+    ]);
+  });
+
+  it("adds Tags (per tote, joined) and Note (per item) columns", () => {
+    const csv = buildCsv(
+      [
+        tote({
+          tags: ["camping", "winter, big"],
+          items: [
+            { id: 1, name: "Stove", qty: 1, note: 'spare "fuel" inside' },
+            { id: 2, name: "Pot" },
+          ],
+        }),
+        tote({ id: 2, name: "Empty", position: "LW2", items: [], tags: ["x"] }),
+        tote({ id: 3, name: "Plain", position: "LW3", tags: null }),
+      ],
+      describe_
+    );
+    expect(csv.slice(1).trimEnd().split("\r\n")).toEqual([
+      "Tote,Location,Item,Quantity,Photo,Tags,Note",
+      'Tools,Spot LW1,Stove,1,,"camping; winter, big","spare ""fuel"" inside"',
+      'Tools,Spot LW1,Pot,1,,"camping; winter, big",',
+      "Empty,Spot LW2,,,,x,",
+      "Plain,Spot LW3,Hammer,2,,,",
     ]);
   });
 
