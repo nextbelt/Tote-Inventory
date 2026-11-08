@@ -28,6 +28,17 @@ function gridFromRoute(route, wallIds) {
   };
 }
 
+/** The tote in a slot. totesByPosition is a plain object: own keys only, so a
+ *  link such as ?slot=constructor never finds Object's inherited members. */
+function toteAt(totesByPosition, position) {
+  return Object.prototype.hasOwnProperty.call(totesByPosition, position)
+    ? totesByPosition[position]
+    : undefined;
+}
+
+/** How long Back is ignored while the browser is still stepping back. */
+const BACK_PENDING_MS = 400;
+
 /** Screen to show for a route, from the data on hand. */
 function resolveRoute(route, { totes, totesByPosition, walls }) {
   if (route.view === "tote" || route.view === "edit") {
@@ -40,10 +51,10 @@ function resolveRoute(route, { totes, totesByPosition, walls }) {
   if (route.view === "slot" || route.view === "new") {
     // Labels are printed upper case, but a typed link may not be
     const position = [route.position, route.position.toUpperCase()].find(
-      (p) => totesByPosition[p] || wallPositions(walls).includes(p)
+      (p) => toteAt(totesByPosition, p) || wallPositions(walls).includes(p)
     );
     if (!position) return { missing: SLOT_GONE_MESSAGE };
-    const occupant = totesByPosition[position];
+    const occupant = toteAt(totesByPosition, position);
     return occupant
       ? { view: "detail", tote: occupant }
       : { view: "form", editTote: null, position };
@@ -83,6 +94,8 @@ function AppShell() {
   const [searchTerm, setSearchTerm] = useState(initialGrid.q);
   const [mode, setMode] = useState(initialGrid.mode); // "garage" | "list"
   const gridScrollRef = useRef(0);
+  // A history.back() is in flight until popstate reports it (see goBack)
+  const backPendingRef = useRef(null);
   // Which item a search result pointed at (original id value, number or string)
   const [highlightItemId, setHighlightItemId] = useState(undefined);
 
@@ -171,6 +184,7 @@ function AppShell() {
   /** Open a screen as a new history entry (the back gesture returns here). */
   const go = (target) => {
     pendingRef.current = null;
+    clearBackPending();
     // The entry we leave must carry the garage state it ended with
     if (live.current.view === "garage") replaceUrl(gridUrl());
     const depth = (historyDepth(window.history.state) ?? 0) + 1;
@@ -184,7 +198,14 @@ function AppShell() {
 
   /** Back button / after save or delete: step back a screen. */
   const goBack = () => {
+    // A second tap (or Save then Back) before popstate fires would step back
+    // twice and could leave the app. The timer is a way out should popstate
+    // never come.
+    if (backPendingRef.current !== null) return;
     if ((historyDepth(window.history.state) ?? 0) > 0) {
+      backPendingRef.current = setTimeout(() => {
+        backPendingRef.current = null;
+      }, BACK_PENDING_MS);
       // popstate does the rest, exactly as for the iOS back gesture
       window.history.back();
       return;
@@ -196,10 +217,16 @@ function AppShell() {
     show(target);
   };
 
+  const clearBackPending = () => {
+    clearTimeout(backPendingRef.current);
+    backPendingRef.current = null;
+  };
+
   // Browser Back/Forward and the iOS edge swipe
   useEffect(() => {
     const onPop = () => {
       pendingRef.current = null;
+      clearBackPending();
       const route = parseRoute(window.location.search);
       const s = live.current;
       if (route.view === "grid") {
@@ -226,8 +253,11 @@ function AppShell() {
       show(resolved);
     };
     window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-    // urlFor / replaceUrl / gridUrl only read refs and window
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      clearBackPending();
+    };
+    // urlFor / replaceUrl / gridUrl / clearBackPending only read refs and window
   }, [show, toast]);
 
   // Deep links: resolve once the data is in, replacing the URL so the link

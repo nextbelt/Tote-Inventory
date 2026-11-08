@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
@@ -299,6 +299,30 @@ describe("App URLs and the back gesture", () => {
       expect(screen.queryByRole("heading", { name: "New Tote" })).not.toBeInTheDocument();
     });
 
+    it("treats inherited property names as empty-handed, not as a tote", async () => {
+      for (const url of ["/?slot=constructor", "/?new=toString", "/?slot=valueOf"]) {
+        openAt(url);
+        const { unmount } = render(<App />);
+        expect(await screen.findByText("That spot isn't in your garage")).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: "Garage Totes" })).toBeInTheDocument();
+        expect(search()).toBe("");
+        unmount();
+      }
+    });
+
+    it("treats an inherited name reached by the back gesture the same way", async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await user.click(await screen.findByLabelText(/^B3: Camping Gear/));
+      await screen.findByRole("heading", { name: "Detail: Camping Gear" });
+      window.history.pushState({ toteNav: 2 }, "", "/?slot=constructor");
+      await traverse("back");
+      await screen.findByRole("heading", { name: "Detail: Camping Gear" });
+      await traverse("forward");
+      expect(await screen.findByText("That spot isn't in your garage")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Garage Totes" })).toBeInTheDocument();
+    });
+
     it("opens ?edit=<id> in the edit form", async () => {
       openAt("/?edit=1");
       render(<App />);
@@ -334,6 +358,72 @@ describe("App URLs and the back gesture", () => {
       await traverse("back");
       await screen.findByRole("heading", { name: "Detail: Camping Gear" });
       expect(search()).toBe("?tote=1");
+    });
+  });
+
+  describe("Back is not repeated while it is in flight", () => {
+    async function openSecondTote(user) {
+      await user.click(await screen.findByLabelText(/^B3: Camping Gear/));
+      await screen.findByRole("heading", { name: "Detail: Camping Gear" });
+      await user.click(screen.getByRole("button", { name: "Open other" }));
+      await screen.findByRole("heading", { name: "Detail: Holiday Lights" });
+    }
+
+    it("a double tap on Back steps back one screen, not two", async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await openSecondTote(user);
+
+      const backSpy = vi.spyOn(window.history, "back");
+      try {
+        const back = screen.getByRole("button", { name: "Back" });
+        await act(async () => {
+          fireEvent.click(back);
+          fireEvent.click(back);
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        });
+
+        expect(backSpy).toHaveBeenCalledTimes(1);
+        await screen.findByRole("heading", { name: "Detail: Camping Gear" });
+        expect(search()).toBe("?tote=1");
+      } finally {
+        backSpy.mockRestore();
+      }
+    });
+
+    it("works again once the first Back has landed", async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await openSecondTote(user);
+
+      await user.click(screen.getByRole("button", { name: "Back" }));
+      await screen.findByRole("heading", { name: "Detail: Camping Gear" });
+      await user.click(screen.getByRole("button", { name: "Back" }));
+      expect(
+        await screen.findByRole("heading", { name: "Garage Totes" })
+      ).toBeInTheDocument();
+    });
+
+    it("lets Back through again if popstate never arrives", async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await openSecondTote(user);
+
+      const back = vi.spyOn(window.history, "back").mockImplementation(() => {});
+      try {
+        const button = screen.getByRole("button", { name: "Back" });
+        fireEvent.click(button);
+        fireEvent.click(button);
+        expect(back).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        });
+        fireEvent.click(button);
+        expect(back).toHaveBeenCalledTimes(2);
+      } finally {
+        back.mockRestore();
+      }
     });
   });
 });
