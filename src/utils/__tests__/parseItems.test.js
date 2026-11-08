@@ -61,10 +61,23 @@ describe("parseItems quantities", () => {
 
   it("reads 3x / 3 x / 3X leading counts", () => {
     expect(pairs("3x tarp")).toEqual([["tarp", 3]]);
-    expect(pairs("3xtarp")).toEqual([["tarp", 3]]);
     expect(pairs("3 x tarp")).toEqual([["tarp", 3]]);
     expect(pairs("3X tarp")).toEqual([["tarp", 3]]);
     expect(pairs("3× tarp")).toEqual([["tarp", 3]]);
+  });
+
+  it("does not read sizes as counts", () => {
+    expect(pairs("Plywood 4 x 8")).toEqual([["Plywood 4 x 8", 1]]);
+    expect(pairs("Tarp 10 x 12")).toEqual([["Tarp 10 x 12", 1]]);
+    expect(pairs("Plywood 4 x8")).toEqual([["Plywood 4 x8", 1]]);
+    expect(pairs("4 x 4 posts")).toEqual([["4 x 4 posts", 1]]);
+    expect(pairs("2 x 4 lumber")).toEqual([["2 x 4 lumber", 1]]);
+    expect(pairs("3XL shirts")).toEqual([["3XL shirts", 1]]);
+    expect(pairs("3xtarp")).toEqual([["3xtarp", 1]]);
+    expect(pairs("Plywood 4 x 8, tarp x2")).toEqual([
+      ["Plywood 4 x 8", 1],
+      ["tarp", 2],
+    ]);
   });
 
   it("reads trailing counts", () => {

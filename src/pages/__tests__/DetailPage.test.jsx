@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import DetailPage from "../DetailPage";
@@ -862,6 +862,40 @@ describe("DetailPage quick-add: several items at once", () => {
       ["saw", 1],
       ["clamps", 2],
     ]);
+  });
+
+  it("does not add on Enter while an IME is composing", async () => {
+    const { db } = setup([]);
+    render(<DetailPage {...props} />);
+
+    fireEvent.change(box(), { target: { value: "rope" } });
+    fireEvent.keyDown(box(), { key: "Enter", isComposing: true });
+    expect(updateItems).not.toHaveBeenCalled();
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(db.items).toHaveLength(1));
+  });
+
+  it("grows to show a long comma-separated entry instead of hiding its wrapped lines", async () => {
+    // jsdom does no layout: pretend each 30 characters wrap onto another 24px
+    // line, plus 24px of padding
+    Object.defineProperty(HTMLTextAreaElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return 24 + 24 * Math.ceil(Math.max(1, this.value.length) / 30);
+      },
+    });
+    try {
+      setup([]);
+      render(<DetailPage {...props} />);
+      expect(box().style.height).toBe("48px");
+      fireEvent.change(box(), {
+        target: { value: "3 bungee cords, tarp, 2 straps, hammer" },
+      });
+      expect(box().style.height).toBe("72px");
+      expect(box()).toHaveValue("3 bungee cords, tarp, 2 straps, hammer");
+    } finally {
+      delete HTMLTextAreaElement.prototype.scrollHeight;
+    }
   });
 
   it("a multi-add is an add-by-id op that survives the other phone's changes", async () => {

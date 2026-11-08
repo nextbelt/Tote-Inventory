@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import FormPage from "../FormPage";
@@ -119,6 +119,17 @@ describe("FormPage add-items box takes several items at once", () => {
       ["glue", null],
       ["camera", "https://img.test/photo.jpg"],
     ]);
+  });
+
+  it("does not add on Enter while an IME is composing", async () => {
+    renderNew();
+    const input = screen.getByLabelText("Item name");
+    fireEvent.change(input, { target: { value: "rope" } });
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    expect(input).toHaveValue("rope");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(input).toHaveValue("");
+    expect(screen.getByText("rope")).toBeInTheDocument();
   });
 
   it("an entry that is too long stays typed while the others are added", async () => {

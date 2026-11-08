@@ -15,13 +15,13 @@ export const MAX_PARSED_QTY = 999;
 const SEPARATORS = /[\r\n,;、，；]+/;
 const TRAILING_PERIODS = /[.。\s]+$/;
 
-// "3x tarp" / "3xtarp" (but not "2x4 lumber": the x must not be followed by a digit)
-const LEADING_X_GLUED = /^(\d+)[x×]\s*(\D.*)$/i;
-// "3 x tarp"
-const LEADING_X_SPACED = /^(\d+)\s+[x×]\s+(.+)$/i;
-// "3 bungee cords"
-const LEADING_PLAIN = /^(\d+)\s+(.+)$/;
-// "tarp x2", "tarp x 2", "tarp × 2"
+// "3x tarp", "3 x tarp", "3× tarp". The x must be followed by a space and then
+// a non-digit: "2x4 lumber", "4 x 4 posts" are sizes, "3XL shirts" is a size.
+const LEADING_X = /^(\d+)\s*[x×]\s+(\D.*)$/i;
+// "3 bungee cords" (but "4 x 4 posts" is a size, not 4 of "x 4 posts")
+const LEADING_PLAIN = /^(\d+)\s+(?![x×](?:\s|$))(.+)$/i;
+// "tarp x2", "tarp x 2", "tarp × 2" - unless the name already ends in a
+// number ("Plywood 4 x 8" is a size, not 8 of "Plywood 4")
 const TRAILING_X = /^(.+?)\s+[x×]\s*(\d+)$/i;
 // "tarp (2)"
 const TRAILING_PAREN = /^(.+?)\s*\((\d+)\)$/;
@@ -32,17 +32,19 @@ const validQty = (n) => Number.isInteger(n) && n >= 1 && n <= MAX_PARSED_QTY;
 /** Split one entry into { name, qty }. A "count" that isn't plausible
  *  (0, 2024 ...) is left in the name instead. */
 function readCount(entry) {
-  for (const re of [LEADING_X_GLUED, LEADING_X_SPACED, LEADING_PLAIN]) {
+  for (const re of [LEADING_X, LEADING_PLAIN]) {
     const m = entry.match(re);
     if (m && validQty(Number(m[1])) && hasLetter(m[2])) {
       return { name: m[2].trim(), qty: Number(m[1]) };
     }
   }
-  for (const re of [TRAILING_X, TRAILING_PAREN]) {
-    const m = entry.match(re);
-    if (m && validQty(Number(m[2])) && hasLetter(m[1])) {
-      return { name: m[1].trim(), qty: Number(m[2]) };
-    }
+  const x = entry.match(TRAILING_X);
+  if (x && validQty(Number(x[2])) && hasLetter(x[1]) && !/\d$/.test(x[1].trim())) {
+    return { name: x[1].trim(), qty: Number(x[2]) };
+  }
+  const p = entry.match(TRAILING_PAREN);
+  if (p && validQty(Number(p[2])) && hasLetter(p[1])) {
+    return { name: p[1].trim(), qty: Number(p[2]) };
   }
   return { name: entry, qty: 1 };
 }
