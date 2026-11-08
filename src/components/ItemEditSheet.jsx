@@ -58,6 +58,10 @@ export default function ItemEditSheet({ item, onSave, onClose, onMove, onViewPho
   };
 
   const handleSave = () => {
+    // The Save button is disabled while a photo uploads, but Enter in a
+    // field lands here too — saving now would keep the old photo, close the
+    // sheet, and orphan the upload when it finishes.
+    if (uploading) return;
     const nameCheck = validateItemName(name);
     if (!nameCheck.valid) {
       setError(nameCheck.error);
@@ -150,7 +154,7 @@ export default function ItemEditSheet({ item, onSave, onClose, onMove, onViewPho
             setError(null);
           }}
           onKeyDown={(e) => {
-            if (e.key === "Enter") handleSave();
+            if (e.key === "Enter" && !e.nativeEvent.isComposing) handleSave();
           }}
           maxLength={MAX_ITEM_NAME_LENGTH}
           autoComplete="off"
@@ -179,7 +183,7 @@ export default function ItemEditSheet({ item, onSave, onClose, onMove, onViewPho
             setError(null);
           }}
           onKeyDown={(e) => {
-            if (e.key === "Enter") handleSave();
+            if (e.key === "Enter" && !e.nativeEvent.isComposing) handleSave();
           }}
           className="apple-input w-full"
         />
