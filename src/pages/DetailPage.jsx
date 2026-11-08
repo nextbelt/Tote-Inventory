@@ -16,7 +16,7 @@ import Sheet from "../components/Sheet";
 import { useToast } from "../components/Toast";
 import TotePicker from "../components/TotePicker";
 import { useTotes } from "../hooks/useTotes";
-import { describePosition } from "../utils/constants";
+import { describePosition, describeSpot } from "../utils/constants";
 import { compressImage } from "../utils/images";
 import RelativeTime from "../components/RelativeTime";
 import { formatDateTime, toteModifiedDate } from "../utils/time";
@@ -484,7 +484,7 @@ export default function DetailPage({
     }
   };
 
-  const { path } = describePosition(tote.position);
+  const path = describeSpot(tote.position, walls);
   const modified = toteModifiedDate(tote);
   const totalThings = items.reduce((sum, it) => sum + itemQty(it), 0);
 

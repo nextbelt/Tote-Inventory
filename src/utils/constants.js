@@ -237,6 +237,63 @@ export function describePosition(position) {
   };
 }
 
+/** Left/middle/right wording for slot `index` of `count` across a row. */
+function columnWord(index, count) {
+  if (count === 2) return index === 0 ? "left" : "right";
+  if (count === 3) return ["left", "middle", "right"][index];
+  return `${index + 1} of ${count}`;
+}
+
+/**
+ * Exact, spoken-style location of a position, using the live walls (side-wall
+ * shelf counts are user-set; row 0 renders at the top), e.g.
+ *   "A1"  → "Front wall · Left rack · top shelf · left bin"
+ *   "D5"  → "Front wall · Workbench · floor, middle"
+ *   "LW2" → "Left wall · shelf 2 of 5"
+ * Falls back to describePosition's wording for anything not on the walls.
+ * describePosition itself is unchanged; this is the richer variant for the UI.
+ */
+export function describeSpot(position, walls = WALLS) {
+  for (const wall of walls) {
+    for (const fixture of wall.fixtures) {
+      const rows = fixture.rows || [];
+      for (let r = 0; r < rows.length; r++) {
+        const c = rows[r].indexOf(position);
+        if (c === -1) continue;
+        const count = rows[r].length;
+        const rowCount = rows.length;
+        const col = count > 1 ? columnWord(c, count) : null;
+
+        if (fixture.kind === "workbench") {
+          const level =
+            r === rowCount - 1
+              ? "floor"
+              : rowCount === 2
+                ? "under the bench"
+                : `level ${r + 1} of ${rowCount}`;
+          return [wall.label, fixture.label, col ? `${level}, ${col}` : level].join(
+            " · "
+          );
+        }
+
+        const isRack = fixture.kind === "rack";
+        const shelf =
+          isRack && r === 0
+            ? "top shelf"
+            : isRack && r === rowCount - 1
+              ? "bottom shelf"
+              : `shelf ${r + 1} of ${rowCount}`;
+        const parts = [wall.label];
+        if (isRack) parts.push(fixture.label);
+        parts.push(shelf);
+        if (col) parts.push(count <= 3 ? `${col} bin` : `bin ${col}`);
+        return parts.join(" · ");
+      }
+    }
+  }
+  return describePosition(position).path;
+}
+
 export const MAX_TOTE_NAME_LENGTH = 100;
 export const MAX_ITEM_NAME_LENGTH = 100;
 export const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
