@@ -50,6 +50,23 @@ export function formatDateTime(value) {
 }
 
 /**
+ * "2:10 PM" when the moment is today; otherwise the full date and time, so
+ * an offline copy from yesterday can't be mistaken for one from today.
+ * Returns "" for a missing/invalid date.
+ */
+export function formatTimeOfDay(value, now = Date.now()) {
+  const d = toDate(value);
+  if (!d) return "";
+  const ref = new Date(now);
+  const sameDay =
+    d.getFullYear() === ref.getFullYear() &&
+    d.getMonth() === ref.getMonth() &&
+    d.getDate() === ref.getDate();
+  if (!sameDay) return formatDateTime(d);
+  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+/**
  * "just now", "5 min ago", "3 hr ago", "1 day ago", "4 days ago", else a
  * date like "Nov 1, 2026". Returns "" for a missing/invalid date.
  */
