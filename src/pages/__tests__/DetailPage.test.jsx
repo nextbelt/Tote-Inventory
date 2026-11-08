@@ -1315,6 +1315,84 @@ describe("DetailPage tote notes, tags, swap and the bins", () => {
     expect(screen.getByLabelText("Notes")).toHaveValue("Fragile glass"); // draft kept
   });
 
+  /** The other phone saves a different note while this editor is open. */
+  const otherPhoneNotes = (notes) =>
+    act(() =>
+      ext.set((s) => ({
+        ...s,
+        totes: s.totes.map((t) => (t.id === 1 ? { ...t, notes } : t)),
+      }))
+    );
+
+  it("notes: when the other phone changed the note while editing, Save shows THEIR text instead of overwriting it; 'Replace with mine' then writes the draft", async () => {
+    setup([lantern]);
+    const updateTote = fakeUpdateTote();
+    ext.set((s) => ({
+      ...s,
+      totes: [{ ...tote, items: [lantern], notes: "Fragile" }],
+      capabilities: caps({ notes: true }),
+      updateTote,
+    }));
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: /Edit note/ }));
+    await user.type(screen.getByLabelText("Notes"), " glass");
+    otherPhoneNotes("lid cracked");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(updateTote).not.toHaveBeenCalled(); // never silently last-writer-wins
+    expect(screen.getByRole("alert")).toHaveTextContent("lid cracked");
+    expect(screen.getByLabelText("Notes")).toHaveValue("Fragile glass"); // draft kept
+    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Replace with mine" }));
+    await waitFor(() => expect(updateTote).toHaveBeenCalledWith(1, { notes: "Fragile glass" }));
+    expect(updateTote).toHaveBeenCalledTimes(1);
+    expect(screen.queryByLabelText("Notes")).not.toBeInTheDocument();
+    expect(screen.getByText("Fragile glass")).toBeInTheDocument();
+  });
+
+  it("notes: 'Keep theirs' drops the draft and writes nothing; an untouched draft just closes even if theirs changed; a draft equal to theirs writes nothing", async () => {
+    setup([lantern]);
+    const updateTote = fakeUpdateTote();
+    ext.set((s) => ({
+      ...s,
+      totes: [{ ...tote, items: [lantern], notes: "Fragile" }],
+      capabilities: caps({ notes: true }),
+      updateTote,
+    }));
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: /Edit note/ }));
+    await user.type(screen.getByLabelText("Notes"), " glass");
+    otherPhoneNotes("lid cracked");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("lid cracked");
+    await user.click(screen.getByRole("button", { name: "Keep theirs" }));
+    expect(updateTote).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("Notes")).not.toBeInTheDocument();
+    expect(screen.getByText("lid cracked")).toBeInTheDocument();
+
+    // Opened on "lid cracked", typed nothing, theirs changed again → nothing to save, no fuss
+    await user.click(screen.getByRole("button", { name: /Edit note/ }));
+    otherPhoneNotes("lid cracked badly");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(updateTote).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Notes")).not.toBeInTheDocument();
+
+    // Their note was removed while a draft typed the very same thing → nothing to write either
+    await user.click(screen.getByRole("button", { name: /Edit note/ }));
+    await user.clear(screen.getByLabelText("Notes"));
+    otherPhoneNotes(null);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(updateTote).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Add a note" })).toBeInTheDocument();
+  });
+
   // ------ tags ------
   it("tags: chips under the title; 'Edit tags' opens the editor with the household's other tags; Save → updateTote(id, { tags }); Undo puts the old tags back", async () => {
     setup([lantern]);
@@ -1373,6 +1451,75 @@ describe("DetailPage tote notes, tags, swap and the bins", () => {
     await user.type(screen.getByLabelText("Add a tag"), "kids");
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith(expect.stringMatching(/One-time setup needed/)));
+    expect(toastMock.show).not.toHaveBeenCalled();
+  });
+
+  it("tags: saves only THIS editor's changes on top of tags the other phone added while it was open; Undo takes back only this edit", async () => {
+    setup([lantern]);
+    const updateTote = fakeUpdateTote();
+    ext.set((s) => ({
+      ...s,
+      totes: [{ ...tote, items: [lantern], tags: ["winter", "kids"] }],
+      capabilities: caps({ tags: true }),
+      updateTote,
+    }));
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Edit tags" }));
+    const dialog = screen.getByRole("dialog", { name: "Tags" });
+    // Meanwhile the other phone adds "fragile" (case differs from how we'd type it)
+    act(() =>
+      ext.set((s) => ({
+        ...s,
+        totes: s.totes.map((t) =>
+          t.id === 1 ? { ...t, tags: ["winter", "kids", "Fragile"] } : t
+        ),
+      }))
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Remove tag kids" }));
+    await user.type(within(dialog).getByLabelText("Add a tag"), "outdoor, fragile{Enter}");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    // "kids" removed, "outdoor" added, THEIR "Fragile" kept (not duplicated by our "fragile")
+    await waitFor(() =>
+      expect(updateTote).toHaveBeenCalledWith(1, { tags: ["winter", "Fragile", "outdoor"] })
+    );
+    expect(updateTote).toHaveBeenCalledTimes(1);
+
+    const [, opts] = toastMock.show.mock.calls.at(-1);
+    await act(async () => {
+      await opts.onAction();
+    });
+    // Undo: "outdoor" goes, "kids" comes back, "Fragile" still theirs to keep
+    expect(updateTote).toHaveBeenLastCalledWith(1, { tags: ["winter", "Fragile", "kids"] });
+  });
+
+  it("tags: when the other phone already made the same change, nothing is written (and no Undo is offered)", async () => {
+    setup([lantern]);
+    const updateTote = fakeUpdateTote();
+    ext.set((s) => ({
+      ...s,
+      totes: [{ ...tote, items: [lantern], tags: ["winter"] }],
+      capabilities: caps({ tags: true }),
+      updateTote,
+    }));
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Edit tags" }));
+    act(() =>
+      ext.set((s) => ({
+        ...s,
+        totes: s.totes.map((t) => (t.id === 1 ? { ...t, tags: ["winter", "kids"] } : t)),
+      }))
+    );
+    await user.type(screen.getByLabelText("Add a tag"), "kids{Enter}");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(updateTote).not.toHaveBeenCalled();
     expect(toastMock.show).not.toHaveBeenCalled();
   });
 
@@ -1481,6 +1628,82 @@ describe("DetailPage tote notes, tags, swap and the bins", () => {
     expect(toastMock.show).not.toHaveBeenCalled();
   });
 
+  /** The other phone moves tote `id` to `position` (realtime refresh). */
+  const otherPhoneMoves = (id, position) =>
+    act(() =>
+      ext.set((s) => {
+        const totes = s.totes.map((t) => (t.id === id ? { ...t, position } : t));
+        return {
+          ...s,
+          totes,
+          totesByPosition: Object.fromEntries(totes.map((t) => [t.position, t])),
+        };
+      })
+    );
+
+  it("swap: refuses when the occupant moved on the other phone while the confirm sheet was open (the promised trade no longer exists)", async () => {
+    const { swapTotes } = setupMoveSheet({ swap: true });
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Move" }));
+    await user.click(screen.getByRole("button", { name: "Swap with Paint in B4" }));
+    otherPhoneMoves(2, "B5"); // Paint is no longer in B4
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Swap" }));
+
+    expect(swapTotes).not.toHaveBeenCalled();
+    expect(toastMock.error).toHaveBeenCalledWith(
+      "“Paint” was moved on the other phone, so nothing was swapped."
+    );
+    expect(toastMock.show).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(ext.get().totes.find((t) => t.id === 1).position).toBe("B3");
+  });
+
+  it("swap: refuses when THIS tote was moved on the other phone while the Move sheet was open", async () => {
+    const { swapTotes } = setupMoveSheet({ swap: true });
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Move" }));
+    await user.click(screen.getByRole("button", { name: "Swap with Paint in B4" }));
+    otherPhoneMoves(1, "B5"); // we're not in B3 any more
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Swap" }));
+
+    expect(swapTotes).not.toHaveBeenCalled();
+    expect(toastMock.error).toHaveBeenCalledWith(
+      "“Camping Gear” was moved on the other phone, so nothing was swapped."
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("swap: Undo swaps back only while both totes are still where the swap left them", async () => {
+    const { swapTotes } = setupMoveSheet({ swap: true });
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Move" }));
+    await user.click(screen.getByRole("button", { name: "Swap with Paint in B4" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Swap" }));
+    await waitFor(() => expect(swapTotes).toHaveBeenCalledTimes(1));
+    expect(ext.get().totes.find((t) => t.id === 2).position).toBe("B3");
+
+    // Within the toast's few seconds the other phone moves Paint from B3 to the empty B5
+    otherPhoneMoves(2, "B5");
+    const [, opts] = toastMock.show.mock.calls.at(-1);
+    await act(async () => {
+      await opts.onAction();
+    });
+
+    // Swapping again would have sent us to B5 and left B3 empty — refused instead
+    expect(swapTotes).toHaveBeenCalledTimes(1);
+    expect(toastMock.error).toHaveBeenCalledWith(
+      expect.stringMatching(/^Can't undo — .* was moved since\.$/)
+    );
+    expect(ext.get().totes.find((t) => t.id === 1).position).toBe("B4");
+    expect(ext.get().totes.find((t) => t.id === 2).position).toBe("B5");
+  });
+
   // ------ delete → Recently deleted ------
   it("delete: the toast says it's in Recently deleted for 30 days, and Undo restores by id", async () => {
     setup([lantern]);
@@ -1564,6 +1787,44 @@ describe("DetailPage tote notes, tags, swap and the bins", () => {
     expect(toastMock.error).not.toHaveBeenCalled();
     expect(toastMock.show).toHaveBeenCalledTimes(1); // just "Removed …" with Undo
     expect(toastMock.show.mock.calls[0][0]).toBe("Removed “Lantern”");
+  });
+
+  it("remove: records nothing when the stored list no longer has the item (the other phone moved it before this phone caught up)", async () => {
+    const { db } = setup([lantern, rope]);
+    const recordRemovedItems = vi.fn().mockResolvedValue({});
+    ext.set((s) => ({ ...s, recordRemovedItems }));
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    // Phone B moved Lantern to another tote; our realtime is behind, so the
+    // row is still on screen when Remove is tapped
+    db.items = [rope];
+    await user.click(screen.getByRole("button", { name: "Remove Lantern" }));
+
+    await waitFor(() => expect(updateItems).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByText("Lantern")).not.toBeInTheDocument());
+    await new Promise((r) => setTimeout(r, 20));
+    // Nothing was really removed here, so a bin entry would only let a later
+    // restore put Lantern in two totes at once
+    expect(recordRemovedItems).not.toHaveBeenCalled();
+    expect(db.items).toEqual([rope]);
+  });
+
+  it("remove: records the row AS STORED (the other phone's count and note), not the stale row on screen", async () => {
+    const { db } = setup([lantern, rope]);
+    const recordRemovedItems = vi.fn().mockResolvedValue({});
+    ext.set((s) => ({ ...s, recordRemovedItems }));
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    db.items = [{ ...lantern, qty: 5, note: "new batteries" }, rope];
+    await user.click(screen.getByRole("button", { name: "Remove Lantern" }));
+
+    await waitFor(() => expect(recordRemovedItems).toHaveBeenCalledTimes(1));
+    expect(recordRemovedItems.mock.calls[0][1]).toEqual([
+      { ...lantern, qty: 5, note: "new batteries" },
+    ]);
+    expect(db.items).toEqual([rope]);
   });
 
   // ------ item notes ------
