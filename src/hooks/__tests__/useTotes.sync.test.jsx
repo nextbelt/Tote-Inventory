@@ -17,6 +17,8 @@ const svc = vi.hoisted(() => ({
 
 vi.mock("../../services/toteService", () => ({
   storageMode: "cloud",
+  NO_CAPABILITIES: Object.freeze({ tags: false, notes: false, swap: false }),
+  UserFacingError: class UserFacingError extends Error {},
   migrateLocalToSupabase: async () => {},
   toteService: {
     getTotes: (...args) => svc.getTotes(...args),
@@ -34,8 +36,16 @@ vi.mock("../../services/toteService", () => ({
 import { SYNCED_AT_KEY, ToteProvider, useTotes } from "../useTotes";
 
 function Probe() {
-  const { totes, lastSyncedAt, connection, source, loading, refreshing } =
-    useTotes();
+  const {
+    totes,
+    lastSyncedAt,
+    connection,
+    source,
+    loading,
+    refreshing,
+    capabilities,
+    deleted,
+  } = useTotes();
   return (
     <>
       <div
@@ -45,6 +55,8 @@ function Probe() {
         data-source={source ?? ""}
         data-loading={String(loading)}
         data-refreshing={String(refreshing)}
+        data-caps={[capabilities.tags, capabilities.notes, capabilities.swap].join(",")}
+        data-deleted={deleted.map((d) => d.id).join(",")}
       >
         {totes.map((t) => t.name).join(",")}
       </div>
@@ -61,6 +73,17 @@ const cloud = (names) => ({
   layout: null,
 });
 const cache = (names) => ({ ...cloud(names), source: "cache" });
+// The database after the owners ran the tags/notes/swap SQL, with one tote
+// sitting in Recently deleted
+const ALL_CAPS = { tags: true, notes: true, swap: true };
+const NO_CAPS = { tags: false, notes: false, swap: false };
+const tombstone = (id, name) => ({
+  id,
+  name,
+  originalPosition: "B2",
+  deletedAt: "2026-11-08T11:00:00.000Z",
+  items: [],
+});
 
 function deferred() {
   let resolve;
@@ -216,6 +239,40 @@ describe("ToteProvider sync freshness", () => {
       await flush();
       expect(probe()).toHaveTextContent("Two");
     });
+
+    it("a slow older response never switches capabilities back off or revives an old deleted list", async () => {
+      const first = deferred();
+      const second = deferred();
+      const queue = [first, second];
+      svc.getTotes = () => queue.shift().promise;
+
+      await mount();
+      expect(probe()).toHaveAttribute("data-caps", "false,false,false");
+      expect(probe()).toHaveAttribute("data-deleted", "");
+      await change(svc.channels[0]); // request 2
+
+      // Request 2 (newer) sees the SQL applied and one tote in the bin
+      second.resolve({
+        ...cloud(["Fresh"]),
+        capabilities: ALL_CAPS,
+        deleted: [tombstone(9, "Old Tote")],
+      });
+      await flush();
+      expect(probe()).toHaveTextContent("Fresh");
+      expect(probe()).toHaveAttribute("data-caps", "true,true,true");
+      expect(probe()).toHaveAttribute("data-deleted", "9");
+
+      // Request 1 (older) finishes with pre-SQL columns and a stale bin
+      first.resolve({
+        ...cloud(["Stale"]),
+        capabilities: NO_CAPS,
+        deleted: [tombstone(7, "Older"), tombstone(9, "Old Tote")],
+      });
+      await flush();
+      expect(probe()).toHaveTextContent("Fresh");
+      expect(probe()).toHaveAttribute("data-caps", "true,true,true");
+      expect(probe()).toHaveAttribute("data-deleted", "9");
+    });
   });
 
   describe("a refetch that falls back to the cache", () => {
@@ -274,6 +331,31 @@ describe("ToteProvider sync freshness", () => {
       expect(probe()).toHaveTextContent("Camping");
       expect(probe()).toHaveAttribute("data-connection", "offline");
       expect(statusText()).toMatch(/^Offline — showing the copy from /);
+    });
+
+    it("keeps capabilities on and the deleted list intact when a refetch falls back to the cache", async () => {
+      svc.getTotes = async () => ({
+        ...cloud(["Camping"]),
+        capabilities: ALL_CAPS,
+        deleted: [tombstone(9, "Old Tote")],
+      });
+      await mount();
+      await status(svc.channels[0], "SUBSCRIBED");
+      expect(probe()).toHaveAttribute("data-caps", "true,true,true");
+      expect(probe()).toHaveAttribute("data-deleted", "9");
+
+      // A cache written before the SQL ran has no tags/notes columns and an
+      // older bin: the cloud copy on screen must keep its state
+      svc.getTotes = async () => ({
+        ...cache([]),
+        capabilities: NO_CAPS,
+        deleted: [],
+      });
+      await change(svc.channels[0]);
+      expect(probe()).toHaveTextContent("Camping");
+      expect(probe()).toHaveAttribute("data-caps", "true,true,true");
+      expect(probe()).toHaveAttribute("data-deleted", "9");
+      expect(probe()).toHaveAttribute("data-connection", "connecting");
     });
 
     it("still shows the cached copy on a cold start, with the time it was synced", async () => {
