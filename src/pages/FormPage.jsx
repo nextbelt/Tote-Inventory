@@ -1,16 +1,14 @@
 import { Camera, ChevronLeft, Plus, Save, X } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import ParsePreview from "../components/ParsePreview";
 import { useToast } from "../components/Toast";
 import { useTotes } from "../hooks/useTotes";
 import { toteService } from "../services/toteService";
 import { describePosition } from "../utils/constants";
 import { compressImage } from "../utils/images";
 import { diffItemsOp } from "../utils/itemOps";
-import {
-  validateImageFile,
-  validateItemName,
-  validateToteName,
-} from "../utils/validation";
+import { leftoverText, parseItems } from "../utils/parseItems";
+import { validateImageFile, validateToteName } from "../utils/validation";
 
 const newId = () =>
   typeof crypto !== "undefined" && crypto.randomUUID
@@ -59,15 +57,33 @@ export default function FormPage({ editTote, position, onBack, onSaved }) {
   };
 
   // ------ Item list management ------
+  const parsedDraft = useMemo(
+    () => parseItems(currentItem.name),
+    [currentItem.name]
+  );
+  const draftCount = parsedDraft.items.length;
+
   const addItemToList = () => {
-    const validation = validateItemName(currentItem.name);
-    if (!validation.valid) return;
+    const parsed = parseItems(currentItem.name);
+    if (parsed.items.length === 0) return;
+    // A photo goes on a single item only; with several it stays in the box
+    const single = parsed.items.length === 1;
+    const image = single ? currentItem.image : null;
 
     setItems((prev) => [
       ...prev,
-      { ...currentItem, name: currentItem.name.trim(), id: newId(), qty: 1 },
+      ...parsed.items.map(({ name, qty }) => ({
+        id: newId(),
+        name,
+        image,
+        qty,
+      })),
     ]);
-    setCurrentItem({ name: "", image: null });
+    // Anything that couldn't be added (too long, past the cap) stays typed
+    setCurrentItem({
+      name: leftoverText(parsed),
+      image: single ? null : currentItem.image,
+    });
   };
 
   const removeItem = (id) => {
@@ -187,20 +203,24 @@ export default function FormPage({ editTote, position, onBack, onSaved }) {
           <div className="border-t border-gray-200 pt-5 dark:border-gray-700">
             <h3 className="apple-subtitle mb-3 text-lg">Add items</h3>
             <div className="flex gap-2">
-              <input
-                type="text"
+              <textarea
                 value={currentItem.name}
                 onChange={(e) =>
                   setCurrentItem((prev) => ({ ...prev, name: e.target.value }))
                 }
                 placeholder="Item name"
-                maxLength={100}
+                rows={Math.min(4, currentItem.name.split("\n").length)}
+                maxLength={5000}
                 autoComplete="off"
                 autoCapitalize="sentences"
                 aria-label="Item name"
-                className="apple-input min-w-0 flex-1"
+                className="apple-input block min-w-0 flex-1 resize-none leading-normal"
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") addItemToList();
+                  // Enter adds; Shift+Enter starts another line (one item per line)
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    addItemToList();
+                  }
                 }}
               />
               <label
@@ -225,13 +245,24 @@ export default function FormPage({ editTote, position, onBack, onSaved }) {
               <button
                 type="button"
                 onClick={addItemToList}
-                disabled={!currentItem.name.trim() || uploading}
-                aria-label="Add item to list"
-                className="apple-button flex h-12 w-12 shrink-0 items-center justify-center !p-0 disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={draftCount === 0 || uploading}
+                aria-label={
+                  draftCount > 1 ? `Add ${draftCount} items` : "Add item to list"
+                }
+                className={`apple-button flex h-12 shrink-0 items-center justify-center disabled:cursor-not-allowed disabled:opacity-40 ${
+                  draftCount > 1
+                    ? "gap-1 whitespace-nowrap !px-3 text-sm"
+                    : "w-12 !p-0"
+                }`}
               >
                 <Plus className="h-5 w-5" aria-hidden="true" />
+                {draftCount > 1 && `Add ${draftCount} items`}
               </button>
             </div>
+            <ParsePreview
+              parsed={parsedDraft}
+              hasImage={Boolean(currentItem.image)}
+            />
 
             {currentItem.image && (
               <div className="mt-3 flex justify-center">

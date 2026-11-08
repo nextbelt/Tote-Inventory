@@ -29,6 +29,16 @@ vi.mock("../../hooks/useTotes", async () => {
 });
 vi.mock("../../components/Toast", () => ({ useToast: () => toastMock }));
 
+// Photo picking: compress + upload are stubbed, upload returns a fixed URL
+const imageMock = vi.hoisted(() => ({
+  compress: vi.fn(async (file) => file),
+  upload: vi.fn(async () => "https://img.test/photo.jpg"),
+}));
+vi.mock("../../utils/images", () => ({ compressImage: imageMock.compress }));
+vi.mock("../../services/toteService", () => ({
+  toteService: { uploadImage: imageMock.upload },
+}));
+
 const lantern = { id: "i1", name: "Lantern", qty: 2 };
 const rope = { id: "i2", name: "Rope", qty: 1 };
 const tote = {
@@ -82,6 +92,8 @@ function setup(items, { failWith } = {}) {
   };
   return { db, otherPhone };
 }
+
+const box = () => screen.getByPlaceholderText("Add an item…");
 
 describe("DetailPage keeps local edits as operations on top of the live store", () => {
   beforeEach(() => {
@@ -790,8 +802,246 @@ describe("DetailPage keeps local edits as operations on top of the live store", 
     await user.type(screen.getByPlaceholderText("Add an item…"), "Tape{Enter}");
 
     await waitFor(() =>
-      expect(toastMock.error).toHaveBeenCalledWith("Couldn't save your changes. Please try again.")
+      expect(toastMock.error).toHaveBeenCalledWith(
+        "Couldn't save your changes. Please try again.",
+        expect.objectContaining({ actionLabel: "Retry" })
+      )
     );
-    await waitFor(() => expect(screen.queryByText("Tape")).not.toBeInTheDocument());
+    // The optimistic row is gone (the typed text is back in the box instead)
+    await waitFor(() => expect(screen.getByText("Items (1)")).toBeInTheDocument());
+    expect(box()).toHaveValue("Tape");
+  });
+});
+
+describe("DetailPage quick-add: several items at once", () => {
+  beforeEach(() => {
+    toastMock.show.mockReset();
+    toastMock.error.mockReset();
+    imageMock.compress.mockClear();
+    imageMock.upload.mockClear();
+  });
+
+  it("adds '3 bungee cords, tarp, 2 straps' in ONE updateItems call with the right quantities", async () => {
+    const { db } = setup([lantern]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.type(box(), "3 bungee cords, tarp, 2 straps");
+    expect(screen.getByRole("button", { name: "Add 3 items" })).toHaveTextContent("Add 3 items");
+    expect(screen.getByTestId("add-preview")).toHaveTextContent(
+      "3 items: 3 x bungee cords, tarp, 2 x straps"
+    );
+    await user.click(screen.getByRole("button", { name: "Add 3 items" }));
+
+    await waitFor(() => expect(db.items).toHaveLength(4));
+    expect(updateItems).toHaveBeenCalledTimes(1);
+    expect(db.items.slice(1).map(({ name, qty }) => [name, qty])).toEqual([
+      ["bungee cords", 3],
+      ["tarp", 1],
+      ["straps", 2],
+    ]);
+    const ids = db.items.map((i) => i.id);
+    expect(new Set(ids).size).toBe(4);
+    expect(box()).toHaveValue("");
+    expect(screen.queryByTestId("add-preview")).not.toBeInTheDocument();
+  });
+
+  it("adds one item per line (Shift+Enter makes a new line, Enter adds)", async () => {
+    const { db } = setup([]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.type(box(), "hammer{Shift>}{Enter}{/Shift}saw{Shift>}{Enter}{/Shift}2 clamps");
+    expect(box()).toHaveValue("hammer\nsaw\n2 clamps");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => expect(db.items).toHaveLength(3));
+    expect(updateItems).toHaveBeenCalledTimes(1);
+    expect(db.items.map((i) => [i.name, i.qty])).toEqual([
+      ["hammer", 1],
+      ["saw", 1],
+      ["clamps", 2],
+    ]);
+  });
+
+  it("a multi-add is an add-by-id op that survives the other phone's changes", async () => {
+    setup([lantern]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.type(box(), "tarp; rope{Enter}");
+    await waitFor(() => expect(updateItems).toHaveBeenCalledTimes(1));
+    const op = updateItems.mock.calls[0][1];
+    const theirs = { id: 7, name: "Glue", qty: 1 }; // legacy numeric id
+    const result = op([lantern, theirs]);
+    expect(result.map((i) => i.name)).toEqual(["Lantern", "Glue", "tarp", "rope"]);
+    expect(result[1].id).toBe(7); // original id value kept
+    // Re-applying (lost compare-and-swap race) doesn't duplicate
+    expect(op(result)).toHaveLength(4);
+  });
+
+  it("single-item add is unchanged: the photo goes on it and qty is 1", async () => {
+    const { db } = setup([lantern]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.upload(
+      screen.getByLabelText("Add photo"),
+      new File(["x"], "tape.png", { type: "image/png" })
+    );
+    expect(await screen.findByText("Photo attached")).toBeInTheDocument();
+    await user.type(box(), "Tape");
+    expect(screen.queryByTestId("add-preview")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add item" }));
+
+    await waitFor(() => expect(db.items).toHaveLength(2));
+    expect(db.items[1]).toMatchObject({
+      name: "Tape",
+      qty: 1,
+      image: "https://img.test/photo.jpg",
+    });
+    expect(screen.queryByText("Photo attached")).not.toBeInTheDocument();
+  });
+
+  it("a single item with a count gets that quantity", async () => {
+    const { db } = setup([]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.type(box(), "tarp x2.{Enter}");
+    await waitFor(() => expect(db.items).toHaveLength(1));
+    expect(db.items[0]).toMatchObject({ name: "tarp", qty: 2 });
+  });
+
+  it("a photo is not attached to several items and stays in the box", async () => {
+    const { db } = setup([]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.upload(
+      screen.getByLabelText("Add photo"),
+      new File(["x"], "tape.png", { type: "image/png" })
+    );
+    await screen.findByText("Photo attached");
+    await user.type(box(), "tape, glue");
+    expect(screen.getByTestId("add-preview")).toHaveTextContent(/photo can only go on a single item/i);
+    await user.click(screen.getByRole("button", { name: "Add 2 items" }));
+
+    await waitFor(() => expect(db.items).toHaveLength(2));
+    expect(db.items.every((i) => !i.image)).toBe(true);
+    expect(screen.getByText("Photo attached")).toBeInTheDocument(); // not lost
+  });
+
+  it("an over-long entry stays in the box while the rest are added", async () => {
+    const { db } = setup([]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+    const long = "z".repeat(101);
+
+    await user.click(box());
+    await user.paste(`rope, ${long}, tarp`);
+    expect(screen.getByTestId("add-preview")).toHaveTextContent(/over 100 characters/);
+    await user.click(screen.getByRole("button", { name: "Add 2 items" }));
+
+    await waitFor(() => expect(db.items.map((i) => i.name)).toEqual(["rope", "tarp"]));
+    expect(box()).toHaveValue(long);
+  });
+
+  it("only the first 50 are added; the rest stay typed", async () => {
+    const { db } = setup([]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(box());
+    await user.paste(Array.from({ length: 52 }, (_, i) => `i${i + 1}`).join(", "));
+    await user.click(screen.getByRole("button", { name: "Add 50 items" }));
+
+    await waitFor(() => expect(db.items).toHaveLength(50));
+    expect(updateItems).toHaveBeenCalledTimes(1);
+    expect(box()).toHaveValue("i51\ni52");
+  });
+
+  describe("when the save fails", () => {
+    const failure = new Error("Couldn't save your changes. Please try again.");
+
+    it("puts the text and photo back and offers Retry, which re-runs the same add", async () => {
+      const { db } = setup([lantern], { failWith: failure });
+      const user = userEvent.setup();
+      render(<DetailPage {...props} />);
+
+      await user.upload(
+        screen.getByLabelText("Add photo"),
+        new File(["x"], "tape.png", { type: "image/png" })
+      );
+      await screen.findByText("Photo attached");
+      await user.type(box(), "2 tape.{Enter}");
+
+      await waitFor(() => expect(toastMock.error).toHaveBeenCalledTimes(1));
+      expect(box()).toHaveValue("2 tape");
+      expect(screen.getByText("Photo attached")).toBeInTheDocument();
+      expect(screen.queryByText("tape")).not.toBeInTheDocument(); // overlay dropped
+      const [message, opts] = toastMock.error.mock.calls[0];
+      expect(message).toBe(failure.message);
+      expect(opts.actionLabel).toBe("Retry");
+
+      // Back online: Retry runs the very same op
+      updateItems.mockImplementation(async (id, op) => {
+        db.items = op(db.items);
+        ext.set((s) => ({ ...s, totes: [{ ...tote, items: db.items }] }));
+      });
+      const failedOp = updateItems.mock.calls[0][1];
+      await act(async () => {
+        opts.onAction();
+      });
+
+      await waitFor(() => expect(db.items).toHaveLength(2));
+      expect(db.items[1]).toMatchObject({
+        name: "tape",
+        qty: 2,
+        image: "https://img.test/photo.jpg",
+      });
+      expect(updateItems.mock.calls[1][1]).toBe(failedOp);
+      // Restored draft is cleared so it isn't added twice
+      expect(box()).toHaveValue("");
+      expect(screen.queryByText("Photo attached")).not.toBeInTheDocument();
+    });
+
+    it("keeps what was typed since and does not duplicate on Retry", async () => {
+      const { db } = setup([], { failWith: failure });
+      const user = userEvent.setup();
+      render(<DetailPage {...props} />);
+
+      await user.type(box(), "rope, tarp{Enter}");
+      await waitFor(() => expect(toastMock.error).toHaveBeenCalledTimes(1));
+      expect(box()).toHaveValue("rope\ntarp");
+
+      await user.type(box(), "{Shift>}{Enter}{/Shift}glue");
+      expect(box()).toHaveValue("rope\ntarp\nglue");
+
+      updateItems.mockImplementation(async (id, op) => {
+        db.items = op(db.items);
+        ext.set((s) => ({ ...s, totes: [{ ...tote, items: db.items }] }));
+      });
+      await act(async () => {
+        toastMock.error.mock.calls[0][1].onAction();
+      });
+      await waitFor(() => expect(db.items.map((i) => i.name)).toEqual(["rope", "tarp"]));
+      expect(box()).toHaveValue("glue");
+    });
+
+    it("a failing Retry restores the box and offers Retry again", async () => {
+      setup([], { failWith: failure });
+      const user = userEvent.setup();
+      render(<DetailPage {...props} />);
+
+      await user.type(box(), "rope, tarp{Enter}");
+      await waitFor(() => expect(toastMock.error).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        toastMock.error.mock.calls[0][1].onAction();
+      });
+      await waitFor(() => expect(toastMock.error).toHaveBeenCalledTimes(2));
+      expect(toastMock.error.mock.calls[1][1].actionLabel).toBe("Retry");
+      expect(box()).toHaveValue("rope\ntarp");
+    });
   });
 });
