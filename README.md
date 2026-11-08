@@ -7,10 +7,10 @@ Safari via **Share → Add to Home Screen**.
 ## What it does
 
 - **Three garage walls** — swipe (or tap tabs) between the Left wall, Front
-  wall, and Right wall. The front wall mirrors the real garage: two wooden
-  tote racks (columns A/B and F/G, five levels), a pegboard + workbench in
-  the middle, and floor totes (C/D/E). A plan-view mini-map shows which wall
-  you're facing.
+  wall, and Right wall. The front wall mirrors the real garage, left to
+  right: the A/B tote rack, the F/G tote rack (five levels each), then a
+  pegboard + workbench with floor totes (C/D/E). A plan-view mini-map shows
+  which wall you're facing.
 - **"Where is it?" search** — forgiving search (typos, plurals, partial
   words) across tote names, positions, and items. Results show the photo,
   quantity, and a location path like `Front wall · Left rack · Level 3`.
@@ -26,6 +26,8 @@ Safari via **Share → Add to Home Screen**.
 - **Build your own side walls** — "Edit shelves" on the Left/Right wall sets
   how many shelf levels each wall has (synced to every device). A shelf that
   still holds a tote can't be removed.
+- **Last modified** — the header shows when anything was last changed, and
+  each tote (and each row in *All totes*) shows its own last-modified time.
 - **Dark mode** — follows the phone's appearance automatically, with a
   manual sun/moon override in the header.
 
@@ -64,7 +66,7 @@ The garage is described as data, not markup, in
 of fixtures (`rack`, `workbench`, `wallShelf`) that own slot positions.
 
 ```
-Front wall  A1–A5, B1–B5 (left rack) · C4–E5 (workbench floor) · F1–F5, G1–G5 (right rack)
+Front wall  A1–A5, B1–B5 (left rack) · F1–F5, G1–G5 (middle rack) · C4–E5 (workbench floor)
 Left wall   LW1–LW5 (shelf levels)
 Right wall  RW1–RW5 (shelf levels)
 ```

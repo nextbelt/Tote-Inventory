@@ -1,4 +1,4 @@
-import { CloudOff, HardDrive, Package, RefreshCw, Wrench } from "lucide-react";
+import { Clock, CloudOff, HardDrive, Package, RefreshCw, Wrench } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import WallPanel, { MiniMap } from "../components/GarageWalls";
 import SearchBar from "../components/SearchBar";
@@ -9,6 +9,7 @@ import TidyUpBanner from "../components/TidyUpBanner";
 import { useTotes } from "../hooks/useTotes";
 import { getWallIdForPosition } from "../utils/constants";
 import { searchTotes } from "../utils/search";
+import { formatDateTime, formatRelative, latestModified } from "../utils/time";
 
 const prefersReducedMotion = () =>
   typeof window !== "undefined" &&
@@ -112,6 +113,7 @@ export default function GridPage({
 
   const results = searchTerm.trim() ? searchTotes(totes, searchTerm) : null;
   const occupied = Object.keys(totesByPosition).length;
+  const lastUpdated = latestModified(totes);
   const sortedTotes = [...totes].sort((a, b) =>
     a.position.localeCompare(b.position, undefined, { numeric: true })
   );
@@ -155,6 +157,18 @@ export default function GridPage({
             </div>
           </div>
           <SearchBar value={searchTerm} onChange={setSearchTerm} />
+          {lastUpdated && (
+            <p className="mt-1.5 flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+              <Clock className="h-3.5 w-3.5" aria-hidden="true" />
+              Last updated{" "}
+              <time
+                dateTime={lastUpdated.toISOString()}
+                title={formatDateTime(lastUpdated)}
+              >
+                {formatRelative(lastUpdated)}
+              </time>
+            </p>
+          )}
         </div>
       </header>
 
@@ -308,8 +322,16 @@ export default function GridPage({
                           <span className="w-11 shrink-0 rounded-lg bg-gray-900 px-2 py-1.5 text-center text-xs font-bold text-yellow-300">
                             {tote.position}
                           </span>
-                          <span className="min-w-0 flex-1 truncate font-semibold text-gray-900 dark:text-gray-100">
-                            {tote.name}
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate font-semibold text-gray-900 dark:text-gray-100">
+                              {tote.name}
+                            </span>
+                            {(tote.updated_at || tote.created_at) && (
+                              <span className="block text-xs text-gray-500 dark:text-gray-400">
+                                Modified{" "}
+                                {formatRelative(tote.updated_at || tote.created_at)}
+                              </span>
+                            )}
                           </span>
                           <span className="shrink-0 rounded-full bg-blue-100 px-2.5 py-1 text-xs font-semibold text-blue-800 dark:bg-blue-950 dark:text-blue-300">
                             {count} item{count === 1 ? "" : "s"}
