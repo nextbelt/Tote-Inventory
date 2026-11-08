@@ -1,6 +1,7 @@
 import { Camera, ChevronLeft, Plus, Save, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import AutoGrowTextarea from "../components/AutoGrowTextarea";
+import DuplicateHint from "../components/DuplicateHint";
 import ParsePreview from "../components/ParsePreview";
 import { useToast } from "../components/Toast";
 import { useTotes } from "../hooks/useTotes";
@@ -303,6 +304,7 @@ export default function FormPage({ editTote, position, onBack, onSaved }) {
               parsed={parsedDraft}
               hasImage={Boolean(currentItem.image)}
             />
+            <DuplicateHint text={currentItem.name} excludeToteId={editTote?.id} />
 
             {currentItem.image && (
               <div className="mt-3 flex justify-center">

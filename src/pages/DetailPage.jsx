@@ -45,6 +45,7 @@ import {
   validateTags,
 } from "../utils/validation";
 import AutoGrowTextarea from "../components/AutoGrowTextarea";
+import DuplicateHint from "../components/DuplicateHint";
 import ParsePreview from "../components/ParsePreview";
 
 const newId = () =>
@@ -113,6 +114,7 @@ export default function DetailPage({
   onDeleted,
   onShowInGarage,
   highlightItemId,
+  onOpenTote,
 }) {
   const {
     totes,
@@ -1092,6 +1094,11 @@ export default function DetailPage({
             </button>
           </div>
           <ParsePreview parsed={parsedDraft} hasImage={Boolean(newItemImage)} />
+          <DuplicateHint
+            text={newItemName}
+            excludeToteId={tote.id}
+            onOpenTote={onOpenTote}
+          />
           {newItemImage && (
             <div className="mt-2 flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
               <img
