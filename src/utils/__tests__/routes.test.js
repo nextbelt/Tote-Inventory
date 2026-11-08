@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildEditUrl,
+  buildGridUrl,
+  buildNewUrl,
   buildSlotUrl,
   buildToteUrl,
+  historyDepth,
   isReservedPosition,
+  navState,
   parseRoute,
   parseToteId,
 } from "../routes";
@@ -76,5 +81,58 @@ describe("helpers", () => {
     expect(parseToteId(null)).toBeNull();
     expect(isReservedPosition("__config__")).toBe(true);
     expect(isReservedPosition("A1")).toBe(false);
+  });
+});
+
+describe("edit and new routes", () => {
+  it("parses ?edit and ?new and rejects reserved or empty values", () => {
+    expect(parseRoute("?edit=5")).toEqual({ view: "edit", toteId: 5 });
+    expect(parseRoute("?new=B3")).toEqual({ view: "new", position: "B3" });
+    expect(parseRoute("?new=__config__")).toEqual({ view: "grid" });
+    expect(parseRoute("?edit=__removed_items__")).toEqual({ view: "grid" });
+    expect(parseRoute("?new=&edit=")).toEqual({ view: "grid" });
+  });
+
+  it("lets ?tote win over ?edit, ?edit over ?new, ?new over ?slot", () => {
+    expect(parseRoute("?edit=1&tote=2")).toEqual({ view: "tote", toteId: 2 });
+    expect(parseRoute("?new=A1&edit=3")).toEqual({ view: "edit", toteId: 3 });
+    expect(parseRoute("?slot=A1&new=B2")).toEqual({ view: "new", position: "B2" });
+  });
+
+  it("round-trips edit and new urls", () => {
+    const edit = new URL(buildEditUrl("https://x.app", "u-1"));
+    expect(parseRoute(edit.search)).toEqual({ view: "edit", toteId: "u-1" });
+    expect(buildEditUrl("", 7)).toBe("/?edit=7");
+    const fresh = new URL(buildNewUrl("https://x.app", "RW2C"));
+    expect(parseRoute(fresh.search)).toEqual({ view: "new", position: "RW2C" });
+    expect(buildNewUrl("", "B3")).toBe("/?new=B3");
+  });
+});
+
+describe("buildGridUrl", () => {
+  it("leaves defaults out", () => {
+    expect(buildGridUrl()).toBe("/");
+    expect(buildGridUrl({ wall: "front", q: "", mode: "garage" })).toBe("/");
+  });
+
+  it("round-trips wall, q and mode", () => {
+    const url = buildGridUrl({ wall: "left", q: "blue tarp & rope", mode: "list" });
+    const route = parseRoute(url.slice(1));
+    expect(route).toEqual({
+      view: "grid",
+      wall: "left",
+      q: "blue tarp & rope",
+      mode: "list",
+    });
+  });
+});
+
+describe("history depth", () => {
+  it("reads back what navState wrote and ignores foreign state", () => {
+    expect(historyDepth(navState(0))).toBe(0);
+    expect(historyDepth(navState(3))).toBe(3);
+    expect(historyDepth(null)).toBeNull();
+    expect(historyDepth({ depth: 2 })).toBeNull();
+    expect(historyDepth({ ...navState(1), depth: -1 })).toBeNull();
   });
 });

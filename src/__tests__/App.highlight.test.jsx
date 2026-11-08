@@ -38,6 +38,7 @@ const totes = [
 describe("App -> DetailPage highlightItemId", () => {
   beforeEach(() => {
     localStorage.clear();
+    window.history.replaceState(null, "", "/");
     localStorage.setItem(STORE_KEY, JSON.stringify(totes));
     detailProps.last = null;
   });
