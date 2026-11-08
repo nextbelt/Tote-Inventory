@@ -1,4 +1,5 @@
 import {
+  ArrowLeftRight,
   Camera,
   ChevronLeft,
   Clock,
@@ -7,12 +8,15 @@ import {
   Minus,
   MoveRight,
   Plus,
+  StickyNote,
+  Tag,
   Trash2,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ItemEditSheet from "../components/ItemEditSheet";
 import Sheet from "../components/Sheet";
+import TagEditor from "../components/TagEditor";
 import { useToast } from "../components/Toast";
 import TotePicker from "../components/TotePicker";
 import { useTotes } from "../hooks/useTotes";
@@ -32,7 +36,13 @@ import {
   updateItem,
 } from "../utils/itemOps";
 import { leftoverText, parseItems } from "../utils/parseItems";
-import { validateImageFile } from "../utils/validation";
+import {
+  MAX_NOTES_LENGTH,
+  normalizeNotes,
+  normalizeTags,
+  validateImageFile,
+  validateNotes,
+} from "../utils/validation";
 import AutoGrowTextarea from "../components/AutoGrowTextarea";
 import ParsePreview from "../components/ParsePreview";
 
@@ -66,6 +76,8 @@ function wallSlots(wall) {
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
+const sameList = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+
 export default function DetailPage({
   tote: initialTote,
   onBack,
@@ -78,16 +90,43 @@ export default function DetailPage({
     totes,
     totesByPosition,
     walls,
+    capabilities,
     updateItems,
+    updateTote,
     deleteTote,
     moveTote,
     restoreTote,
+    swapTotes,
+    recordRemovedItems,
   } = useTotes();
   const toast = useToast();
+  // Until the owners run the setup SQL these columns don't exist: the UI for
+  // them is hidden entirely (never a disabled hint that tempts a tap).
+  const canTag = Boolean(capabilities?.tags);
+  const canNote = Boolean(capabilities?.notes);
+  const canSwap = Boolean(capabilities?.swap);
 
   // Always read the latest version from the store
   const tote = totes.find((t) => t.id === initialTote.id) || initialTote;
   const storeItems = Array.isArray(tote.items) ? tote.items : EMPTY_ITEMS;
+  const toteTags = useMemo(() => normalizeTags(tote.tags), [tote.tags]);
+  // Tags already used on OTHER totes, most common first: the household's own
+  // vocabulary, so "Xmas" and "christmas" don't both creep in.
+  const tagSuggestions = useMemo(() => {
+    const seen = new Map(); // lower-cased → { tag, n }
+    totes.forEach((t) => {
+      if (t.id === tote.id) return;
+      normalizeTags(t.tags).forEach((tag) => {
+        const key = tag.toLocaleLowerCase();
+        const cur = seen.get(key);
+        if (cur) cur.n += 1;
+        else seen.set(key, { tag, n: 1 });
+      });
+    });
+    return [...seen.values()]
+      .sort((a, b) => b.n - a.n || a.tag.localeCompare(b.tag))
+      .map((e) => e.tag);
+  }, [totes, tote.id]);
 
   // Optimistic edits are OPERATIONS layered on the live store, never a
   // snapshot. So a realtime refresh from the other phone can't wipe what is
@@ -118,6 +157,12 @@ export default function DetailPage({
   const parsedDraft = useMemo(() => parseItems(newItemName), [newItemName]);
   const draftCount = parsedDraft.items.length;
   const [sheet, setSheet] = useState(null); // "move" | "delete" | null
+  // Occupied slot tapped in the Move sheet: the tote to swap places with
+  const [swapWith, setSwapWith] = useState(null);
+  const [tagEditorOpen, setTagEditorOpen] = useState(false);
+  const [notesEditing, setNotesEditing] = useState(false);
+  const [notesDraft, setNotesDraft] = useState("");
+  const [savingNotes, setSavingNotes] = useState(false);
   const [lightbox, setLightbox] = useState(null);
   // Item being edited / moved: a snapshot of the row as it was tapped, so
   // the sheet never vanishes mid-edit if the other phone touches the list.
@@ -315,12 +360,37 @@ export default function DetailPage({
     return true;
   };
 
+  /**
+   * Remember explicitly removed items in the Recently deleted bin — best
+   * effort: the removal itself has already landed, so a failure here is
+   * neither shown nor allowed to revert anything. Never called for a move
+   * (the item lives on in the other tote) nor for a failed removal.
+   */
+  const recordRemoval = useCallback(
+    (removed) => {
+      const t = toteRef.current;
+      Promise.resolve()
+        .then(() =>
+          recordRemovedItems(
+            { id: t.id, name: t.name, position: t.position },
+            removed
+          )
+        )
+        .catch(() => {});
+    },
+    [recordRemovedItems]
+  );
+
   const removeItem = (item) => {
     if (blockedByDelete()) return;
     const index = items.findIndex((it) => it.id === item.id);
     // Land any staged +/- first so Undo brings back the quantity you saw
     flushStaged();
-    runOp(removeItemOp(item.id));
+    runOp(removeItemOp(item.id)).then((saved) => {
+      // `item` is the row as shown (staged count included, which the flush
+      // above has just landed) — what the bin should remember
+      if (saved) recordRemoval([item]);
+    });
     toast.show(`Removed “${item.name}”`, {
       actionLabel: "Undo",
       // Restore-by-id: safe even if the other phone changed the list since
@@ -462,7 +532,63 @@ export default function DetailPage({
     };
   }, [highlightItemId]);
 
-  // ------ move / delete ------
+  // ------ tote notes (capabilities.notes) ------
+  const openNotes = () => {
+    if (blockedByDelete()) return;
+    setNotesDraft(typeof tote.notes === "string" ? tote.notes : "");
+    setNotesEditing(true);
+  };
+
+  const handleSaveNotes = async () => {
+    if (blockedByDelete()) return;
+    const notes = normalizeNotes(notesDraft);
+    const check = validateNotes(notes);
+    if (!check.valid) {
+      toast.error(check.error);
+      return;
+    }
+    if (notes === normalizeNotes(tote.notes)) {
+      setNotesEditing(false);
+      return;
+    }
+    setSavingNotes(true);
+    try {
+      await updateTote(tote.id, { notes });
+      setNotesEditing(false);
+    } catch (err) {
+      // Keep the editor open so what was typed isn't lost
+      toast.error(err.message);
+    } finally {
+      setSavingNotes(false);
+    }
+  };
+
+  // ------ tags (capabilities.tags) ------
+  const handleSaveTags = async (next) => {
+    setTagEditorOpen(false);
+    if (blockedByDelete()) return;
+    const before = toteTags;
+    if (sameList(next, before)) return;
+    try {
+      await updateTote(tote.id, { tags: next });
+      toast.show(next.length === 0 ? "Tags removed" : "Tags updated", {
+        actionLabel: "Undo",
+        onAction: () =>
+          updateTote(tote.id, { tags: before }).catch((err) =>
+            toast.error(err.message)
+          ),
+      });
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
+  // ------ move / swap / delete ------
+  const closeMoveSheet = () => {
+    setSheet(null);
+    setSwapWith(null);
+  };
+
   const handleMove = async (position) => {
     const from = tote.position;
     setSheet(null);
@@ -474,6 +600,24 @@ export default function DetailPage({
         // Position-only patch: undoing a move can't revert item edits
         onAction: () =>
           moveTote(tote, from).catch((err) => toast.error(err.message)),
+      });
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
+  /** Trade spots with `other` in one step (cloud: one transaction). */
+  const handleSwap = async (other) => {
+    closeMoveSheet();
+    try {
+      await swapTotes(tote.id, other.id);
+      const { path } = describePosition(other.position);
+      toast.show(`Swapped with “${other.name}” — now in ${path}`, {
+        actionLabel: "Undo",
+        // Swapping the same pair again puts both back; positions only, so
+        // item edits made meanwhile on either tote are untouched
+        onAction: () =>
+          swapTotes(tote.id, other.id).catch((err) => toast.error(err.message)),
       });
     } catch (err) {
       toast.error(err.message);
@@ -503,11 +647,14 @@ export default function DetailPage({
       // …and never let the unmount flush try to save them afterwards.
       replaceStaged(new Map());
       onDeleted();
-      toast.show(`Deleted “${snapshot.name}”`, {
-        actionLabel: "Undo",
-        onAction: () =>
-          restoreTote(snapshot).catch((err) => toast.error(err.message)),
-      });
+      toast.show(
+        `Deleted “${snapshot.name}” — it's in Recently deleted for 30 days`,
+        {
+          actionLabel: "Undo",
+          onAction: () =>
+            restoreTote(snapshot).catch((err) => toast.error(err.message)),
+        }
+      );
     } catch (err) {
       deletingRef.current = false;
       toast.error(err.message);
@@ -592,6 +739,105 @@ export default function DetailPage({
           {path}
           <span className="font-normal text-blue-500 dark:text-blue-400">· Show me</span>
         </button>
+
+        {/* Tags (only once the setup SQL has added the column) */}
+        {canTag && (
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            {toteTags.length > 0 && (
+              <ul aria-label="Tags" className="contents">
+                {toteTags.map((tag) => (
+                  <li
+                    key={tag}
+                    className="inline-flex min-h-[32px] items-center rounded-full bg-blue-50 px-3 text-sm font-semibold text-blue-700 dark:bg-blue-950 dark:text-blue-300"
+                  >
+                    {tag}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                if (!blockedByDelete()) setTagEditorOpen(true);
+              }}
+              className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full border border-dashed border-gray-300 px-3 text-sm font-semibold text-gray-600 dark:border-gray-600 dark:text-gray-300"
+            >
+              <Tag className="h-4 w-4" aria-hidden="true" />
+              {toteTags.length > 0 ? "Edit tags" : "Add tag"}
+            </button>
+          </div>
+        )}
+
+        {/* Notes (only once the setup SQL has added the column) */}
+        {canNote &&
+          (notesEditing ? (
+            <div className="apple-card mb-5 p-3">
+              <label
+                htmlFor="tote-notes"
+                className="mb-1 block text-sm font-semibold text-gray-700 dark:text-gray-300"
+              >
+                Notes
+              </label>
+              <textarea
+                id="tote-notes"
+                value={notesDraft}
+                onChange={(e) => setNotesDraft(e.target.value)}
+                rows={4}
+                maxLength={MAX_NOTES_LENGTH}
+                placeholder="Anything worth remembering about this tote…"
+                autoComplete="off"
+                autoCapitalize="sentences"
+                autoFocus
+                className="apple-input w-full resize-none leading-normal"
+              />
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <span className="text-xs text-gray-500 dark:text-gray-400">
+                  {notesDraft.length}/{MAX_NOTES_LENGTH}
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setNotesEditing(false)}
+                    disabled={savingNotes}
+                    className="min-h-[44px] rounded-xl border border-gray-300 px-4 font-semibold text-gray-700 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveNotes}
+                    disabled={savingNotes}
+                    className="apple-button min-h-[44px] !py-0 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {savingNotes ? "Saving…" : "Save"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={openNotes}
+              className="apple-card mb-5 block min-h-[44px] w-full p-3 text-left"
+            >
+              {tote.notes ? (
+                <>
+                  <p className="whitespace-pre-wrap break-words text-sm text-gray-600 dark:text-gray-400">
+                    {tote.notes}
+                  </p>
+                  <span className="mt-1.5 inline-flex items-center gap-1 text-xs font-semibold text-blue-600 dark:text-blue-400">
+                    <Edit2 className="h-3 w-3" aria-hidden="true" />
+                    Edit note
+                  </span>
+                </>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-gray-500 dark:text-gray-400">
+                  <StickyNote className="h-4 w-4" aria-hidden="true" />
+                  Add a note
+                </span>
+              )}
+            </button>
+          ))}
 
         {/* Quick add */}
         <div className="apple-card mb-5 p-3">
@@ -733,6 +979,11 @@ export default function DetailPage({
                     >
                       {item.name}
                     </p>
+                    {typeof item.note === "string" && item.note.trim() && (
+                      <p className="line-clamp-2 break-words text-xs leading-snug text-gray-500 dark:text-gray-400">
+                        {item.note}
+                      </p>
+                    )}
                     {out && (
                       <span className="text-xs font-semibold text-red-500">
                         Out — restock?
@@ -779,11 +1030,42 @@ export default function DetailPage({
         )}
       </main>
 
-      {/* Move sheet */}
-      {sheet === "move" && (
-        <Sheet title={`Move “${tote.name}”`} onClose={() => setSheet(null)}>
+      {/* Move sheet (occupied slots offer a swap once the SQL has been run) */}
+      {sheet === "move" && swapWith && (
+        <Sheet
+          title={`Swap with “${swapWith.name}” (${swapWith.position})?`}
+          onClose={closeMoveSheet}
+        >
+          <p className="mb-4 text-gray-600 dark:text-gray-400">
+            “{tote.name}” goes to {swapWith.position} and “{swapWith.name}”
+            comes here to {tote.position}. Both keep their items.
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setSwapWith(null)}
+              className="min-h-[48px] flex-1 rounded-xl border border-gray-300 font-semibold text-gray-700 dark:border-gray-600 dark:text-gray-300"
+            >
+              Back
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSwap(swapWith)}
+              className="apple-button flex flex-1 items-center justify-center gap-2"
+            >
+              <ArrowLeftRight className="h-4 w-4" aria-hidden="true" />
+              Swap
+            </button>
+          </div>
+        </Sheet>
+      )}
+      {sheet === "move" && !swapWith && (
+        <Sheet title={`Move “${tote.name}”`} onClose={closeMoveSheet}>
           <p className="mb-3 text-sm text-gray-500 dark:text-gray-400">
-            Pick an empty spot. It&apos;s now in {path}.
+            {canSwap
+              ? "Pick an empty spot, or tap another tote to swap places with it."
+              : "Pick an empty spot."}{" "}
+            It&apos;s now in {path}.
           </p>
           {walls.map((wall) => (
             <div key={wall.id} className="mb-4">
@@ -794,15 +1076,25 @@ export default function DetailPage({
                 {wallSlots(wall).map((pos) => {
                   const occupant = totesByPosition[pos];
                   const isHere = pos === tote.position;
+                  const swappable = Boolean(occupant) && !isHere && canSwap;
                   return (
                     <button
                       key={pos}
                       type="button"
-                      disabled={Boolean(occupant)}
-                      onClick={() => handleMove(pos)}
+                      disabled={Boolean(occupant) && !swappable}
+                      onClick={() =>
+                        swappable ? setSwapWith(occupant) : handleMove(pos)
+                      }
+                      aria-label={
+                        swappable
+                          ? `Swap with ${occupant.name} in ${pos}`
+                          : undefined
+                      }
                       className={`min-h-[48px] rounded-xl border text-xs font-bold ${
                         isHere
                           ? "border-blue-500 bg-blue-500 text-white"
+                          : swappable
+                          ? "border-gray-300 bg-white text-gray-700 active:bg-gray-100 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:active:bg-gray-700"
                           : occupant
                           ? "border-gray-200 bg-gray-100 text-gray-400 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-500"
                           : "border-blue-200 bg-white text-blue-700 active:bg-blue-50 dark:border-blue-800 dark:bg-gray-800 dark:text-blue-300 dark:active:bg-blue-950"
@@ -853,6 +1145,16 @@ export default function DetailPage({
             </button>
           </div>
         </Sheet>
+      )}
+
+      {/* Tag editor */}
+      {tagEditorOpen && canTag && (
+        <TagEditor
+          tags={toteTags}
+          suggestions={tagSuggestions}
+          onSave={handleSaveTags}
+          onClose={() => setTagEditorOpen(false)}
+        />
       )}
 
       {/* Edit item sheet */}

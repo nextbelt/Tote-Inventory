@@ -32,6 +32,27 @@ export function validateItemName(name) {
   return { valid: true, error: null };
 }
 
+// A short note on one item ("left shoe only", "needs batteries"). Lives in
+// the items JSONB, so no database change is involved.
+export const MAX_ITEM_NOTE_LENGTH = 200;
+
+/** Optional: empty / null / undefined are fine (the note is removed). */
+export function validateItemNote(note) {
+  if (note === null || note === undefined || note === "") {
+    return { valid: true, error: null };
+  }
+  if (typeof note !== "string") {
+    return { valid: false, error: "Note must be text." };
+  }
+  if (note.trim().length > MAX_ITEM_NOTE_LENGTH) {
+    return {
+      valid: false,
+      error: `Note must be ${MAX_ITEM_NOTE_LENGTH} characters or less.`,
+    };
+  }
+  return { valid: true, error: null };
+}
+
 export function validatePosition(position) {
   if (!position) {
     return { valid: false, error: "Position is required." };

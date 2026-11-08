@@ -123,6 +123,47 @@ describe("itemOps (pure, idempotent item operations)", () => {
       const once = op(base);
       expect(op(once)).toEqual(once);
     });
+
+    describe("note", () => {
+      const noted = [
+        { id: 7, name: "Legacy", qty: 1, note: "old note" },
+        { id: "7", name: "Uuid-ish", qty: 1 },
+      ];
+
+      it("sets a trimmed note on the matching item only — numeric and string ids never cross over", () => {
+        const byNumber = updateItem(7, { note: "  needs batteries  " })(noted);
+        expect(byNumber[0]).toEqual({ id: 7, name: "Legacy", qty: 1, note: "needs batteries" });
+        expect(byNumber[1]).toBe(noted[1]); // "7" untouched (identity kept)
+
+        const byString = updateItem("7", { note: "left glove only" })(noted);
+        expect(byString[0]).toBe(noted[0]);
+        expect(byString[1]).toEqual({ id: "7", name: "Uuid-ish", qty: 1, note: "left glove only" });
+      });
+
+      it("an empty, blank or null note REMOVES the key (never stores note: '')", () => {
+        expect(updateItem(7, { note: "" })(noted)[0]).toEqual({ id: 7, name: "Legacy", qty: 1 });
+        expect(updateItem(7, { note: "   " })(noted)[0]).toEqual({ id: 7, name: "Legacy", qty: 1 });
+        expect(updateItem(7, { note: null })(noted)[0]).toEqual({ id: 7, name: "Legacy", qty: 1 });
+        expect(updateItem(7, { note: undefined })(noted)[0]).toEqual({ id: 7, name: "Legacy", qty: 1 });
+        // Clearing a note that isn't there is harmless (idempotent, no key added)
+        expect("note" in updateItem("7", { note: null })(noted)[1]).toBe(false);
+      });
+
+      it("a non-string note is treated as a clear, and travels alongside other fields", () => {
+        const next = updateItem(7, { name: "Drill", qty: 2, note: 42 })(noted);
+        expect(next[0]).toEqual({ id: 7, name: "Drill", qty: 2 });
+      });
+
+      it("a note edit never touches the other fields, and vice versa", () => {
+        const withPhoto = [{ ...lantern, image: "x.jpg", note: "keep" }];
+        expect(updateItem("i1", { note: "new" })(withPhoto)[0]).toEqual({
+          ...lantern,
+          image: "x.jpg",
+          note: "new",
+        });
+        expect(updateItem("i1", { qty: 9 })(withPhoto)[0].note).toBe("keep");
+      });
+    });
   });
 
   it("composeOps applies in order; ops tolerate a non-array input", () => {
