@@ -9,7 +9,8 @@ import TidyUpBanner from "../components/TidyUpBanner";
 import { useTotes } from "../hooks/useTotes";
 import { getWallIdForPosition } from "../utils/constants";
 import { searchTotes } from "../utils/search";
-import { formatDateTime, formatRelative, latestModified } from "../utils/time";
+import RelativeTime from "../components/RelativeTime";
+import { latestModified, toteModifiedDate } from "../utils/time";
 
 const prefersReducedMotion = () =>
   typeof window !== "undefined" &&
@@ -160,13 +161,8 @@ export default function GridPage({
           {lastUpdated && (
             <p className="mt-1.5 flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
               <Clock className="h-3.5 w-3.5" aria-hidden="true" />
-              Last updated{" "}
-              <time
-                dateTime={lastUpdated.toISOString()}
-                title={formatDateTime(lastUpdated)}
-              >
-                {formatRelative(lastUpdated)}
-              </time>
+              <span>Last updated</span>
+              <RelativeTime date={lastUpdated} />
             </p>
           )}
         </div>
@@ -312,6 +308,7 @@ export default function GridPage({
                     const count = Array.isArray(tote.items)
                       ? tote.items.length
                       : 0;
+                    const modified = toteModifiedDate(tote);
                     return (
                       <li key={tote.id}>
                         <button
@@ -326,10 +323,9 @@ export default function GridPage({
                             <span className="block truncate font-semibold text-gray-900 dark:text-gray-100">
                               {tote.name}
                             </span>
-                            {(tote.updated_at || tote.created_at) && (
+                            {modified && (
                               <span className="block text-xs text-gray-500 dark:text-gray-400">
-                                Modified{" "}
-                                {formatRelative(tote.updated_at || tote.created_at)}
+                                Modified <RelativeTime date={modified} />
                               </span>
                             )}
                           </span>

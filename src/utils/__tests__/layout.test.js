@@ -10,6 +10,7 @@ import {
 } from "../constants";
 
 const leftRows = (walls) => walls[0].fixtures[0].rows;
+const frontWall = (walls) => walls.find((w) => w.id === "front");
 const rightRows = (walls) => walls[2].fixtures[0].rows;
 
 describe("buildWalls", () => {
@@ -93,5 +94,30 @@ describe("pattern-based position helpers", () => {
   it("returns null wall for unknown positions", () => {
     expect(getWallIdForPosition("Z9")).toBeNull();
     expect(describePosition("Z9")).toEqual({ wallId: null, path: "Z9" });
+  });
+});
+
+describe("front wall", () => {
+  it("renders A/B rack, then F/G rack, then the C/D/E workbench (IDs unchanged)", () => {
+    const front = frontWall(buildWalls(DEFAULT_LAYOUT));
+    expect(front.fixtures.map((f) => f.id)).toEqual([
+      "rack-ab",
+      "rack-fg",
+      "workbench",
+    ]);
+    expect(front.fixtures[1].rows.flat()).toEqual([
+      "F1", "G1", "F2", "G2", "F3", "G3", "F4", "G4", "F5", "G5",
+    ]);
+    expect(front.fixtures[2].rows.flat()).toEqual([
+      "C4", "D4", "E4", "C5", "D5", "E5",
+    ]);
+  });
+
+  it("describes F/G slots as the middle rack", () => {
+    expect(describePosition("F3")).toEqual({
+      wallId: "front",
+      path: "Front wall · Middle rack · Level 3",
+    });
+    expect(describePosition("G5").path).toBe("Front wall · Middle rack · Level 5");
   });
 });
