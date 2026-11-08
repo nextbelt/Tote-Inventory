@@ -72,6 +72,22 @@ function csvField(value) {
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
+/**
+ * Photo column: only real web links are useful in a spreadsheet. Old
+ * un-migrated photos are base64 data: URIs (can be megabytes, and Excel/
+ * Numbers cap a cell at 32,767 characters), so they get a short marker; the
+ * full value stays in the JSON backup, which is the real restore source.
+ */
+export const EMBEDDED_PHOTO_MARKER = "(embedded photo)";
+
+function photoCell(image) {
+  if (typeof image !== "string") return "";
+  const v = image.trim();
+  if (/^https?:\/\//i.test(v)) return v;
+  if (/^data:/i.test(v)) return EMBEDDED_PHOTO_MARKER;
+  return "";
+}
+
 function locationText(describe, position) {
   if (typeof describe !== "function") return position ?? "";
   const d = describe(position);
@@ -101,7 +117,7 @@ export function buildCsv(totes, describe) {
           location,
           it?.name,
           itemQty(it),
-          typeof it?.image === "string" ? it.image : "",
+          photoCell(it?.image),
         ]);
       });
     });
@@ -205,8 +221,13 @@ export function parseBackup(text) {
  * Compare a backup to what exists now. Only ever ADDS:
  *  - createTotes: backup totes whose id is gone and whose slot is free
  *  - conflicts:   backup totes whose id is gone but whose slot is taken now
- *                 ({ tote, occupiedBy }) — the user must choose what to do
+ *                 ({ tote, occupiedBy }) - the user must choose what to do
  *  - addItems:    items missing (by id) from totes that still exist
+ *  - movedElsewhere: backup items that are NOT missing, because the same id
+ *                 now lives in a different current tote (the app lets you
+ *                 move items, which keeps the id). They are left out of
+ *                 createTotes/conflicts/addItems so restoring never
+ *                 duplicates them: { item, fromToteId, nowInToteId }
  * Ids are compared with their original types (1 is not "1").
  */
 export function planRestore(backup, currentTotes) {
@@ -216,43 +237,104 @@ export function planRestore(backup, currentTotes) {
   const byId = new Map(current.map((t) => [t.id, t]));
   const slotOwner = new Map(current.map((t) => [t.position, t]));
 
+  // Where every item id lives right now, across ALL current totes.
+  const itemHome = new Map();
+  for (const t of current) {
+    for (const it of Array.isArray(t.items) ? t.items : []) {
+      if (it && !itemHome.has(it.id)) itemHome.set(it.id, t.id);
+    }
+  }
+
   const createTotes = [];
   const conflicts = [];
   const addItems = [];
+  const movedElsewhere = [];
+
+  // Items of backup tote `b` that should actually be restored. Skips ids that
+  // already exist anywhere (same tote: simply present; other tote: moved) and
+  // duplicate ids inside the backup itself.
+  const itemsToRestore = (b) => {
+    const seen = new Set();
+    const keep = [];
+    for (const it of Array.isArray(b.items) ? b.items : []) {
+      if (!it || seen.has(it.id)) continue;
+      seen.add(it.id);
+      if (itemHome.has(it.id)) {
+        const home = itemHome.get(it.id);
+        if (home !== b.id) {
+          movedElsewhere.push({ item: it, fromToteId: b.id, nowInToteId: home });
+        }
+        continue;
+      }
+      keep.push(it);
+    }
+    return keep;
+  };
+
+  // Keep the original object when nothing was filtered out.
+  const withItems = (b, items) =>
+    Array.isArray(b.items) && items.length === b.items.length
+      ? b
+      : { ...b, items };
 
   for (const b of Array.isArray(backup?.totes) ? backup.totes : []) {
     if (!b || isReserved(b)) continue;
     const existing = byId.get(b.id);
+    const missing = itemsToRestore(b);
     if (existing) {
-      const have = new Set(
-        (Array.isArray(existing.items) ? existing.items : []).map((it) => it.id)
-      );
-      const missing = [];
-      for (const it of Array.isArray(b.items) ? b.items : []) {
-        if (!have.has(it.id)) {
-          have.add(it.id); // also guards duplicate ids inside the backup
-          missing.push(it);
-        }
-      }
       if (missing.length) addItems.push({ toteId: existing.id, items: missing });
       continue;
     }
     const owner = slotOwner.get(b.position);
     if (owner) {
-      conflicts.push({ tote: b, occupiedBy: owner });
+      conflicts.push({ tote: withItems(b, missing), occupiedBy: owner });
     } else {
-      createTotes.push(b);
-      slotOwner.set(b.position, b); // two backup totes can't claim one slot
+      const planned = withItems(b, missing);
+      createTotes.push(planned);
+      slotOwner.set(b.position, planned); // two backup totes can't claim one slot
     }
   }
 
-  return { createTotes, conflicts, addItems };
+  return { createTotes, conflicts, addItems, movedElsewhere };
 }
 
 // ── Download ─────────────────────────────────────────────────────────────
 
-/** Save text as a file via Blob + object URL + a[download] (iOS Safari 13+). */
-export function downloadFile(filename, mime, text) {
+// Long enough for a slow phone to finish reading a large blob.
+const REVOKE_DELAY_MS = 60_000;
+
+/**
+ * Save text as a file. Returns a promise of how it went:
+ *  - "shared":     the system share sheet took the file (Save to Files, etc.)
+ *  - "cancelled":  the user dismissed the share sheet (nothing was saved)
+ *  - "downloaded": fell back to a Blob + object URL + a[download] click
+ *
+ * In an installed iOS Home Screen app, a bare a[download] click can replace
+ * the app view with the file (no back button) or do nothing, so the share
+ * sheet is preferred when the browser can share files. Must be called
+ * straight from a tap handler (share needs a user gesture). The caller should
+ * confirm with the user that the file really arrived, and this needs a check
+ * on a real iPhone.
+ */
+export async function downloadFile(filename, mime, text) {
+  if (
+    typeof navigator !== "undefined" &&
+    typeof navigator.share === "function" &&
+    typeof navigator.canShare === "function" &&
+    typeof File === "function"
+  ) {
+    try {
+      const file = new File([text], filename, { type: mime });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: filename });
+        return "shared";
+      }
+    } catch (err) {
+      if (err && err.name === "AbortError") return "cancelled";
+      // Any other share failure: fall through to the plain download.
+    }
+  }
+
   const blob = new Blob([text], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -261,9 +343,10 @@ export function downloadFile(filename, mime, text) {
   a.style.display = "none";
   document.body.appendChild(a);
   a.click();
-  // Revoke after the browser has had a chance to start the download.
+  // Revoke only after the browser has had plenty of time to read the blob.
   setTimeout(() => {
     URL.revokeObjectURL(url);
     a.remove();
-  }, 1000);
+  }, REVOKE_DELAY_MS);
+  return "downloaded";
 }
