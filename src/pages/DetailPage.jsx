@@ -84,18 +84,20 @@ const lowerTag = (tag) => tag.toLocaleLowerCase();
  * What the tag editor changed, as a delta against the list it opened on —
  * so it can be re-applied to whatever the tags are NOW (the other phone may
  * have edited them while the sheet was open) instead of replacing them.
- * Tags compare case-insensitively, like normalizeTags dedupes them.
+ * Compared by EXACT string, so fixing a tag's capitalization ("xmas" →
+ * "Xmas") counts as a change: it removes the old spelling and adds the new
+ * one. Case-insensitive matching happens in applyTagDelta.
  */
-const diffTags = (opened, next) => {
-  const openedKeys = new Set(opened.map(lowerTag));
-  const nextKeys = new Set(next.map(lowerTag));
-  return {
-    added: next.filter((t) => !openedKeys.has(lowerTag(t))),
-    removed: opened.filter((t) => !nextKeys.has(lowerTag(t))),
-  };
-};
+const diffTags = (opened, next) => ({
+  added: next.filter((t) => !opened.includes(t)),
+  removed: opened.filter((t) => !next.includes(t)),
+});
 
-/** `current` without `removed` (by case-insensitive key), then `added`. */
+/**
+ * `current` without `removed` (by case-insensitive key), then `added`;
+ * normalizeTags keeps the FIRST spelling of a tag that appears twice, so a
+ * tag the other phone already has (in any case) wins over our added copy.
+ */
 const applyTagDelta = (current, { added, removed }) => {
   const gone = new Set(removed.map(lowerTag));
   return normalizeTags([
@@ -442,15 +444,30 @@ export default function DetailPage({
       hit = (Array.isArray(list) ? list : []).find((it) => it.id === item.id) ?? null;
       return remove(list);
     };
-    runOp(remove, { persist }).then((saved) => {
+    const done = runOp(remove, { persist }).then((saved) => {
       // `hit` carries the stored count, which includes the staged taps the
       // flush above landed first (same per-tote write queue)
       if (saved && hit) recordRemoval([hit]);
+      return saved;
     });
     toast.show(`Removed “${item.name}”`, {
       actionLabel: "Undo",
-      // Restore-by-id: safe even if the other phone changed the list since
-      onAction: () => runOp(restoreItem(item, index)),
+      onAction: async () => {
+        // Wait for the removal itself, so `hit` says what it really took out
+        const saved = await done;
+        if (saved && !hit) {
+          // Nothing was removed here: the other phone had already moved or
+          // removed it. Putting the stale row back would leave the item in
+          // two totes (or revive one they deleted).
+          toast.error(
+            `“${item.name}” was already moved or removed on the other phone.`
+          );
+          return;
+        }
+        // Restore-by-id, and the row AS STORED (the other phone's count or
+        // note is not lost on Undo): safe even if the list changed since
+        return runOp(restoreItem(hit ?? item, index));
+      },
     });
   };
 
