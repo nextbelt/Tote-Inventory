@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_ITEM_NOTE_LENGTH,
   normalizeNotes,
   normalizeTags,
   validateImageFile,
   validateItemName,
+  validateItemNote,
   validateNotes,
   validatePosition,
   validateTags,
@@ -128,5 +130,26 @@ describe("notes", () => {
     expect(validateNotes("x".repeat(500)).valid).toBe(true);
     expect(validateNotes("x".repeat(501)).valid).toBe(false);
     expect(validateNotes(42).valid).toBe(false);
+  });
+});
+
+describe("validateItemNote (per-item note, lives in the items JSONB)", () => {
+  it("allows a missing or empty note — the note is optional", () => {
+    expect(validateItemNote(undefined)).toEqual({ valid: true, error: null });
+    expect(validateItemNote(null)).toEqual({ valid: true, error: null });
+    expect(validateItemNote("")).toEqual({ valid: true, error: null });
+  });
+
+  it("accepts up to 200 characters (after trimming) and refuses longer", () => {
+    expect(validateItemNote("x".repeat(MAX_ITEM_NOTE_LENGTH)).valid).toBe(true);
+    expect(validateItemNote(`  ${"x".repeat(MAX_ITEM_NOTE_LENGTH)}  `).valid).toBe(true);
+    const long = validateItemNote("x".repeat(MAX_ITEM_NOTE_LENGTH + 1));
+    expect(long.valid).toBe(false);
+    expect(long.error).toBe("Note must be 200 characters or less.");
+  });
+
+  it("refuses a non-string note", () => {
+    expect(validateItemNote(42).valid).toBe(false);
+    expect(validateItemNote({}).valid).toBe(false);
   });
 });

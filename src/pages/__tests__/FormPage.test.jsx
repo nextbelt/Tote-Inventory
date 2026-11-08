@@ -7,6 +7,7 @@ const store = vi.hoisted(() => ({
   saveTote: vi.fn(),
   updateTote: vi.fn(),
   updateItems: vi.fn(),
+  recordRemovedItems: vi.fn(),
   totesByPosition: {},
 }));
 
@@ -31,6 +32,7 @@ describe("FormPage (edit mode) saves only what changed", () => {
     store.saveTote.mockReset().mockResolvedValue({});
     store.updateTote.mockReset().mockResolvedValue({});
     store.updateItems.mockReset().mockResolvedValue({});
+    store.recordRemovedItems.mockReset().mockResolvedValue({});
   });
 
   it("renaming + adding/removing items never writes the items snapshot it opened with", async () => {
@@ -103,6 +105,74 @@ describe("FormPage (edit mode) saves only what changed", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/couldn't save/i);
     expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  // ------ removed items → Recently deleted bin ------
+  it("items taken off the list are recorded in the bin once the save landed (adds are not)", async () => {
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+    render(<FormPage editTote={opened} position="B3" onBack={vi.fn()} onSaved={onSaved} />);
+
+    await user.type(screen.getByLabelText("Item name"), "Tape{Enter}");
+    await user.click(screen.getByRole("button", { name: "Remove Lantern" }));
+    await user.click(screen.getByRole("button", { name: "Save Changes" }));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    await waitFor(() => expect(store.recordRemovedItems).toHaveBeenCalledTimes(1));
+    expect(store.recordRemovedItems).toHaveBeenCalledWith(
+      { id: 1, name: "Camping Gear", position: "B3" },
+      [lantern]
+    );
+    // Recorded only after the item write succeeded
+    expect(store.updateItems.mock.invocationCallOrder[0]).toBeLessThan(
+      store.recordRemovedItems.mock.invocationCallOrder[0]
+    );
+  });
+
+  it("a rename alone, or adding items only, records nothing", async () => {
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+    render(<FormPage editTote={opened} position="B3" onBack={vi.fn()} onSaved={onSaved} />);
+
+    await user.clear(screen.getByLabelText("Tote name"));
+    await user.type(screen.getByLabelText("Tote name"), "Renamed");
+    await user.type(screen.getByLabelText("Item name"), "Tape{Enter}");
+    await user.click(screen.getByRole("button", { name: "Save Changes" }));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(store.updateItems).toHaveBeenCalledTimes(1);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(store.recordRemovedItems).not.toHaveBeenCalled();
+  });
+
+  it("nothing is recorded when the removal itself fails to save", async () => {
+    store.updateItems.mockRejectedValueOnce(new Error("Couldn't save your changes. Please try again."));
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+    render(<FormPage editTote={opened} position="B3" onBack={vi.fn()} onSaved={onSaved} />);
+
+    await user.click(screen.getByRole("button", { name: "Remove Lantern" }));
+    await user.click(screen.getByRole("button", { name: "Save Changes" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn't save/i);
+    expect(onSaved).not.toHaveBeenCalled();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(store.recordRemovedItems).not.toHaveBeenCalled();
+  });
+
+  it("a failure to record is silent: the save still completes and no error is shown", async () => {
+    store.recordRemovedItems.mockRejectedValue(new Error("bin unreachable"));
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+    render(<FormPage editTote={opened} position="B3" onBack={vi.fn()} onSaved={onSaved} />);
+
+    await user.click(screen.getByRole("button", { name: "Remove Lantern" }));
+    await user.click(screen.getByRole("button", { name: "Save Changes" }));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    await waitFor(() => expect(store.recordRemovedItems).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("creating a new tote still inserts the whole tote", async () => {

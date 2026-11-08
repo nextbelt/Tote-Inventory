@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ItemEditSheet from "../ItemEditSheet";
@@ -223,6 +223,64 @@ describe("ItemEditSheet", () => {
     expect(onMove).toHaveBeenCalled();
     expect(onSave).not.toHaveBeenCalled();
   });
+});
+
+describe("ItemEditSheet note", () => {
+  const noteBox = () => screen.getByLabelText(/^Note/);
+
+  it("opens with the item's note (empty for an item without one) and caps it at 200 characters", () => {
+    setup({ ...lantern, note: "Left glove missing" });
+    expect(noteBox()).toHaveValue("Left glove missing");
+    expect(noteBox()).toHaveAttribute("maxLength", "200");
+    cleanupAndRender({ id: 7, name: "Old thing" });
+    expect(noteBox()).toHaveValue("");
+  });
+
+  it("Save hands back only the note when that is all that changed (trimmed)", async () => {
+    const { onSave } = setup();
+    const user = userEvent.setup();
+    await user.type(noteBox(), "  needs new batteries ");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(onSave).toHaveBeenCalledWith({ note: "needs new batteries" });
+  });
+
+  it("clearing the note hands back note: null so the key is removed", async () => {
+    const { onSave } = setup({ ...lantern, note: "old" });
+    const user = userEvent.setup();
+    await user.clear(noteBox());
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(onSave).toHaveBeenCalledWith({ note: null });
+  });
+
+  it("an unchanged note (even with different surrounding whitespace) is not a change", async () => {
+    const { onSave } = setup({ ...lantern, note: "same" });
+    const user = userEvent.setup();
+    await user.type(noteBox(), "  ");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(onSave).toHaveBeenCalledWith({});
+  });
+
+  it("refuses a note over 200 characters (pasted past the cap) without saving", async () => {
+    const { onSave } = setup();
+    const user = userEvent.setup();
+    fireEvent.change(noteBox(), { target: { value: "x".repeat(201) } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Note must be 200 characters or less.");
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("Enter inside the note makes a new line instead of saving", async () => {
+    const { onSave } = setup();
+    const user = userEvent.setup();
+    await user.type(noteBox(), "line one{Enter}line two");
+    expect(noteBox()).toHaveValue("line one\nline two");
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  function cleanupAndRender(item) {
+    cleanup();
+    setup(item);
+  }
 });
 
 describe("ItemEditSheet exact count limit", () => {

@@ -17,7 +17,8 @@ const newId = () =>
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 export default function FormPage({ editTote, position, onBack, onSaved }) {
-  const { saveTote, updateTote, updateItems, totesByPosition } = useTotes();
+  const { saveTote, updateTote, updateItems, recordRemovedItems, totesByPosition } =
+    useTotes();
   const toast = useToast();
 
   const [toteName, setToteName] = useState(editTote?.name || "");
@@ -125,7 +126,24 @@ export default function FormPage({ editTote, position, onBack, onSaved }) {
           await updateTote(editTote.id, fields);
         }
         const itemsOp = diffItemsOp(editTote.items, items);
-        if (itemsOp) await updateItems(editTote.id, itemsOp);
+        if (itemsOp) {
+          await updateItems(editTote.id, itemsOp);
+          // Items taken off the list go to Recently deleted — best effort,
+          // only once the removal has actually landed: a failure to record
+          // is neither shown nor allowed to hold up the save.
+          const kept = new Set(items.map((it) => it.id));
+          const removed = (editTote.items || []).filter((it) => !kept.has(it.id));
+          if (removed.length > 0) {
+            Promise.resolve()
+              .then(() =>
+                recordRemovedItems(
+                  { id: editTote.id, name, position },
+                  removed
+                )
+              )
+              .catch(() => {});
+          }
+        }
       } else {
         await saveTote(
           { name: toteName.trim(), position, items },

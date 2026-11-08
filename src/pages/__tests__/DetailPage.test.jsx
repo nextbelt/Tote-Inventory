@@ -75,10 +75,15 @@ function setup(items, { failWith } = {}) {
     totes: [{ ...tote, items }],
     totesByPosition: {},
     walls: [],
+    // Until the owners run the setup SQL nothing optional is available
+    capabilities: { tags: false, notes: false, swap: false },
     updateItems,
+    updateTote: vi.fn(),
     deleteTote: vi.fn(),
     moveTote: vi.fn(),
     restoreTote: vi.fn(),
+    swapTotes: vi.fn(),
+    recordRemovedItems: vi.fn().mockResolvedValue(null),
   });
   /** Realtime refresh: the other phone changed the row. */
   const otherPhone = (nextItems) => {
@@ -846,6 +851,20 @@ describe("DetailPage keeps local edits as operations on top of the live store", 
     expect(await screen.findByText("Lantern")).toBeInTheDocument();
   });
 
+  it("moving an item to another tote never records it in the removed-items bin (it lives on over there)", async () => {
+    const { dbs } = setupTwoTotes([lantern, rope]);
+    const recordRemovedItems = vi.fn().mockResolvedValue({});
+    ext.set((s) => ({ ...s, recordRemovedItems }));
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await moveLanternToPaint(user);
+    await waitFor(() => expect(updateItems).toHaveBeenCalledTimes(2));
+    expect(dbs[2].items).toEqual([lantern]);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(recordRemovedItems).not.toHaveBeenCalled();
+  });
+
   it("Undo whose second step fails says the item is now in both totes (never lost)", async () => {
     const { dbs } = setupTwoTotes([lantern], { failRemoveFromDest: true });
     const user = userEvent.setup();
@@ -1189,5 +1208,407 @@ describe("DetailPage quick-add: several items at once", () => {
       expect(toastMock.error.mock.calls[1][1].actionLabel).toBe("Retry");
       expect(box()).toHaveValue("rope\ntarp");
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// U1: tote notes, tags, swap, delete → bin, removed items → bin, item notes
+// ---------------------------------------------------------------------------
+describe("DetailPage tote notes, tags, swap and the bins", () => {
+  beforeEach(() => {
+    toastMock.show.mockReset();
+    toastMock.error.mockReset();
+  });
+
+  const caps = (over) => ({ tags: false, notes: false, swap: false, ...over });
+
+  /** updateTote that patches the row in the fake store (like the hook does). */
+  function fakeUpdateTote() {
+    return vi.fn(async (id, fields) => {
+      let saved;
+      ext.set((s) => {
+        const totes = s.totes.map((t) =>
+          t.id === id ? { ...t, ...fields, updated_at: new Date().toISOString() } : t
+        );
+        saved = totes.find((t) => t.id === id);
+        return { ...s, totes };
+      });
+      return saved;
+    });
+  }
+
+  // ------ capability gating ------
+  it("hides the tags and notes UI entirely while the database lacks the columns, even if the row carries values", () => {
+    setup([lantern]);
+    ext.set((s) => ({
+      ...s,
+      totes: [{ ...tote, items: [lantern], tags: ["winter"], notes: "Fragile glass" }],
+    }));
+    render(<DetailPage {...props} />);
+
+    expect(screen.queryByRole("button", { name: /Add tag|Edit tags/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Tags" })).not.toBeInTheDocument();
+    expect(screen.queryByText("winter")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Add a note|Edit note/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("Fragile glass")).not.toBeInTheDocument();
+  });
+
+  // ------ notes ------
+  it("notes: 'Add a note' → type → Save sends updateTote(id, { notes }) and shows the saved text; clearing saves null", async () => {
+    setup([lantern]);
+    const updateTote = fakeUpdateTote();
+    ext.set((s) => ({ ...s, capabilities: caps({ notes: true }), updateTote }));
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Add a note" }));
+    const box = screen.getByLabelText("Notes");
+    expect(box).toHaveAttribute("maxLength", "500");
+    await user.type(box, "Fragile glass{Enter}Keep upright");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(updateTote).toHaveBeenCalledWith(1, { notes: "Fragile glass\nKeep upright" })
+    );
+    expect(screen.queryByLabelText("Notes")).not.toBeInTheDocument();
+    expect(screen.getByText(/Fragile glass/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Edit note/ })).toBeInTheDocument();
+    expect(updateItems).not.toHaveBeenCalled(); // never an items write
+
+    await user.click(screen.getByRole("button", { name: /Edit note/ }));
+    await user.clear(screen.getByLabelText("Notes"));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(updateTote).toHaveBeenLastCalledWith(1, { notes: null }));
+    expect(await screen.findByRole("button", { name: "Add a note" })).toBeInTheDocument();
+  });
+
+  it("notes: Cancel and an unchanged Save write nothing; a failed save shows the error and keeps the draft open", async () => {
+    setup([lantern]);
+    const updateTote = fakeUpdateTote();
+    ext.set((s) => ({
+      ...s,
+      totes: [{ ...tote, items: [lantern], notes: "Fragile" }],
+      capabilities: caps({ notes: true }),
+      updateTote,
+    }));
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: /Edit note/ }));
+    await user.type(screen.getByLabelText("Notes"), " glass");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(updateTote).not.toHaveBeenCalled();
+    expect(screen.getByText("Fragile")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Edit note/ }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(updateTote).not.toHaveBeenCalled(); // same text → nothing to save
+    expect(screen.queryByLabelText("Notes")).not.toBeInTheDocument();
+
+    updateTote.mockRejectedValueOnce(new Error("Couldn't save your changes. Please try again."));
+    await user.click(screen.getByRole("button", { name: /Edit note/ }));
+    await user.type(screen.getByLabelText("Notes"), " glass");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(toastMock.error).toHaveBeenCalledWith("Couldn't save your changes. Please try again.")
+    );
+    expect(screen.getByLabelText("Notes")).toHaveValue("Fragile glass"); // draft kept
+  });
+
+  // ------ tags ------
+  it("tags: chips under the title; 'Edit tags' opens the editor with the household's other tags; Save → updateTote(id, { tags }); Undo puts the old tags back", async () => {
+    setup([lantern]);
+    const updateTote = fakeUpdateTote();
+    const paintTote = { id: 2, name: "Paint", position: "A1", items: [], tags: ["garage", "Winter"] };
+    ext.set((s) => ({
+      ...s,
+      totes: [{ ...tote, items: [lantern], tags: ["winter"] }, paintTote],
+      capabilities: caps({ tags: true }),
+      updateTote,
+    }));
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    expect(within(screen.getByRole("list", { name: "Tags" })).getByText("winter")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Edit tags" }));
+    const dialog = screen.getByRole("dialog", { name: "Tags" });
+    const suggested = within(dialog).getByRole("list", { name: "Suggested tags" });
+    // "Winter" is already on this tote (case-insensitive) → only "garage" is offered
+    expect(within(suggested).getAllByRole("button").map((b) => b.textContent)).toEqual(["garage"]);
+    await user.click(within(suggested).getByRole("button", { name: "garage" }));
+    await user.type(within(dialog).getByLabelText("Add a tag"), "kids{Enter}");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(updateTote).toHaveBeenCalledWith(1, { tags: ["winter", "garage", "kids"] }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    const chips = within(screen.getByRole("list", { name: "Tags" })).getAllByRole("listitem");
+    expect(chips.map((li) => li.textContent)).toEqual(["winter", "garage", "kids"]);
+    expect(updateItems).not.toHaveBeenCalled();
+
+    const [msg, opts] = toastMock.show.mock.calls.at(-1);
+    expect(msg).toBe("Tags updated");
+    expect(opts.actionLabel).toBe("Undo");
+    await act(async () => {
+      await opts.onAction();
+    });
+    expect(updateTote).toHaveBeenLastCalledWith(1, { tags: ["winter"] });
+  });
+
+  it("tags: with none yet the button says 'Add tag'; saving unchanged tags writes nothing; a failed save shows the service error without an Undo", async () => {
+    setup([lantern]);
+    const updateTote = fakeUpdateTote();
+    ext.set((s) => ({ ...s, capabilities: caps({ tags: true }), updateTote }));
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Add tag" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Tags" })).getByRole("button", { name: "Save" }));
+    expect(updateTote).not.toHaveBeenCalled();
+    expect(toastMock.show).not.toHaveBeenCalled();
+
+    updateTote.mockRejectedValueOnce(
+      new Error('One-time setup needed: run the SQL in MAINTENANCE.md ("One-time setup: tags, notes and swap").')
+    );
+    await user.click(screen.getByRole("button", { name: "Add tag" }));
+    await user.type(screen.getByLabelText("Add a tag"), "kids");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith(expect.stringMatching(/One-time setup needed/)));
+    expect(toastMock.show).not.toHaveBeenCalled();
+  });
+
+  // ------ swap ------
+  const paint = {
+    id: 2,
+    name: "Paint",
+    position: "B4",
+    items: [],
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+  };
+  const frontWall = { id: "front", label: "Front wall", fixtures: [{ slots: ["B3", "B4", "B5"] }] };
+
+  function setupMoveSheet({ swap }) {
+    setup([lantern]);
+    const swapTotes = vi.fn(async (aId, bId) => {
+      let rows;
+      ext.set((s) => {
+        const a = s.totes.find((t) => t.id === aId);
+        const b = s.totes.find((t) => t.id === bId);
+        rows = [{ ...a, position: b.position }, { ...b, position: a.position }];
+        const totes = s.totes.map((t) => rows.find((r) => r.id === t.id) || t);
+        return { ...s, totes, totesByPosition: Object.fromEntries(totes.map((t) => [t.position, t])) };
+      });
+      return rows;
+    });
+    const mine = { ...tote, items: [lantern] };
+    ext.set((s) => ({
+      ...s,
+      totes: [mine, paint],
+      totesByPosition: { B3: mine, B4: paint },
+      walls: [frontWall],
+      capabilities: caps({ swap }),
+      swapTotes,
+    }));
+    return { swapTotes };
+  }
+
+  it("swap: without the capability an occupied slot stays disabled, exactly as before", async () => {
+    const { swapTotes } = setupMoveSheet({ swap: false });
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Move" }));
+    const sheet = screen.getByRole("dialog", { name: "Move “Camping Gear”" });
+    expect(within(sheet).getByText(/Pick an empty spot\./)).toBeInTheDocument();
+    expect(within(sheet).queryByText(/swap/i)).not.toBeInTheDocument();
+    expect(within(sheet).getByRole("button", { name: /B4/ })).toBeDisabled(); // occupied
+    expect(within(sheet).getByRole("button", { name: /B3/ })).toBeDisabled(); // "here"
+    expect(within(sheet).getByRole("button", { name: /B5/ })).toBeEnabled(); // empty
+    expect(swapTotes).not.toHaveBeenCalled();
+  });
+
+  it("swap: with the capability, tapping an occupied slot asks to confirm, swaps in one call, and Undo swaps back", async () => {
+    const { swapTotes } = setupMoveSheet({ swap: true });
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Move" }));
+    expect(screen.getByText(/tap another tote to swap places/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /B3/ })).toBeDisabled(); // still "here"
+    await user.click(screen.getByRole("button", { name: "Swap with Paint in B4" }));
+
+    const confirm = screen.getByRole("dialog", { name: "Swap with “Paint” (B4)?" });
+    expect(swapTotes).not.toHaveBeenCalled(); // nothing until confirmed
+    await user.click(within(confirm).getByRole("button", { name: "Back" }));
+    expect(screen.getByRole("dialog", { name: "Move “Camping Gear”" })).toBeInTheDocument();
+    expect(swapTotes).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Swap with Paint in B4" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Swap" }));
+
+    await waitFor(() => expect(swapTotes).toHaveBeenCalledWith(1, 2));
+    expect(swapTotes).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(updateItems).not.toHaveBeenCalled(); // positions only, never items
+    await waitFor(() =>
+      expect(toastMock.show).toHaveBeenCalledWith(
+        expect.stringMatching(/^Swapped with “Paint” — now in /),
+        expect.objectContaining({ actionLabel: "Undo" })
+      )
+    );
+    expect(ext.get().totes.find((t) => t.id === 1).position).toBe("B4");
+
+    const [, opts] = toastMock.show.mock.calls.at(-1);
+    await act(async () => {
+      await opts.onAction();
+    });
+    expect(swapTotes).toHaveBeenCalledTimes(2);
+    expect(swapTotes).toHaveBeenLastCalledWith(1, 2);
+    expect(ext.get().totes.find((t) => t.id === 1).position).toBe("B3");
+  });
+
+  it("swap: a failed swap shows the service error and offers no Undo", async () => {
+    const { swapTotes } = setupMoveSheet({ swap: true });
+    swapTotes.mockRejectedValueOnce(new Error("One of those totes no longer exists."));
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Move" }));
+    await user.click(screen.getByRole("button", { name: "Swap with Paint in B4" }));
+    await user.click(screen.getByRole("button", { name: "Swap" }));
+
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith("One of those totes no longer exists."));
+    expect(toastMock.show).not.toHaveBeenCalled();
+  });
+
+  // ------ delete → Recently deleted ------
+  it("delete: the toast says it's in Recently deleted for 30 days, and Undo restores by id", async () => {
+    setup([lantern]);
+    const deleteTote = vi.fn().mockResolvedValue(undefined);
+    const restoreTote = vi.fn().mockResolvedValue(tote);
+    ext.set((s) => ({ ...s, deleteTote, restoreTote }));
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Delete tote" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(toastMock.show).toHaveBeenCalledTimes(1));
+    const [msg, opts] = toastMock.show.mock.calls[0];
+    expect(msg).toBe("Deleted “Camping Gear” — it's in Recently deleted for 30 days");
+    expect(opts.actionLabel).toBe("Undo");
+    await act(async () => {
+      await opts.onAction();
+    });
+    expect(restoreTote).toHaveBeenCalledTimes(1);
+    expect(restoreTote.mock.calls[0][0]).toMatchObject({ id: 1, name: "Camping Gear", position: "B3" });
+    expect(restoreTote.mock.calls[0][0].items).toEqual([lantern]);
+  });
+
+  // ------ removed items → bin ------
+  it("remove: records the item in the bin exactly once, after the removal landed, with the count you saw; Undo records nothing more", async () => {
+    const { db } = setup([lantern, rope]);
+    const recordRemovedItems = vi.fn().mockResolvedValue({});
+    ext.set((s) => ({ ...s, recordRemovedItems }));
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Add one Lantern" })); // staged +1 → 3
+    await user.click(screen.getByRole("button", { name: "Remove Lantern" }));
+
+    await waitFor(() => expect(recordRemovedItems).toHaveBeenCalledTimes(1));
+    expect(recordRemovedItems).toHaveBeenCalledWith(
+      { id: 1, name: "Camping Gear", position: "B3" },
+      [{ ...lantern, qty: 3 }]
+    );
+    expect(db.items).toEqual([rope]);
+    // Recorded only after the remove itself had saved
+    expect(updateItems.mock.invocationCallOrder.at(-1)).toBeLessThan(
+      recordRemovedItems.mock.invocationCallOrder[0]
+    );
+
+    const [, opts] = toastMock.show.mock.calls.at(-1);
+    await act(async () => {
+      opts.onAction();
+    });
+    await waitFor(() => expect(db.items).toEqual([{ ...lantern, qty: 3 }, rope]));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(recordRemovedItems).toHaveBeenCalledTimes(1);
+  });
+
+  it("remove: nothing is recorded when the removal fails", async () => {
+    setup([lantern], { failWith: new Error("Couldn't save your changes. Please try again.") });
+    const recordRemovedItems = vi.fn().mockResolvedValue({});
+    ext.set((s) => ({ ...s, recordRemovedItems }));
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Remove Lantern" }));
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith("Couldn't save your changes. Please try again."));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(recordRemovedItems).not.toHaveBeenCalled();
+    expect(screen.getByText("Lantern")).toBeInTheDocument(); // overlay dropped, still here
+  });
+
+  it("remove: a failure to record is silent — no extra toast, the removal stands", async () => {
+    const { db } = setup([lantern, rope]);
+    const recordRemovedItems = vi.fn().mockRejectedValue(new Error("bin unreachable"));
+    ext.set((s) => ({ ...s, recordRemovedItems }));
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Remove Lantern" }));
+    await waitFor(() => expect(recordRemovedItems).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(db.items).toEqual([rope]);
+    expect(toastMock.error).not.toHaveBeenCalled();
+    expect(toastMock.show).toHaveBeenCalledTimes(1); // just "Removed …" with Undo
+    expect(toastMock.show.mock.calls[0][0]).toBe("Removed “Lantern”");
+  });
+
+  // ------ item notes ------
+  it("item note: shown in gray under the name; edited through the sheet as a note-only op; Undo and clearing work; mixed id types stay apart", async () => {
+    const legacy = { id: 7, name: "Old drill", qty: 1 };
+    const { db } = setup([
+      { ...lantern, note: "Left glove missing" },
+      legacy,
+      { id: "7", name: "Impostor", qty: 1 },
+    ]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    expect(screen.getByText("Left glove missing").closest("li")).toBe(screen.getByText("Lantern").closest("li"));
+
+    // Edit the legacy (numeric id) item's note
+    await user.click(screen.getByRole("button", { name: "Edit Old drill" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit item" });
+    expect(within(dialog).getByLabelText(/^Note/)).toHaveValue("");
+    await user.type(within(dialog).getByLabelText(/^Note/), "Needs a new battery");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(db.items[1]).toEqual({ ...legacy, note: "Needs a new battery" }));
+    expect(db.items[2]).toEqual({ id: "7", name: "Impostor", qty: 1 }); // "7" untouched
+    expect(screen.getByText("Needs a new battery").closest("li")).toBe(screen.getByText("Old drill").closest("li"));
+    // Note-only op: a rename from the other phone survives
+    const op = updateItems.mock.calls.at(-1)[1];
+    expect(op([{ ...legacy, name: "Drill", qty: 4 }])).toEqual([
+      { ...legacy, name: "Drill", qty: 4, note: "Needs a new battery" },
+    ]);
+
+    // Undo removes the note again (there was none before → key gone)
+    const [msg, opts] = toastMock.show.mock.calls.at(-1);
+    expect(msg).toBe("Updated “Old drill”");
+    await act(async () => {
+      opts.onAction();
+    });
+    await waitFor(() => expect("note" in db.items[1]).toBe(false));
+    expect(screen.queryByText("Needs a new battery")).not.toBeInTheDocument();
+
+    // Clearing the lantern's note removes the key
+    await user.click(screen.getByRole("button", { name: "Edit Lantern" }));
+    await user.clear(screen.getByLabelText(/^Note/));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect("note" in db.items[0]).toBe(false));
+    expect(screen.queryByText("Left glove missing")).not.toBeInTheDocument();
   });
 });

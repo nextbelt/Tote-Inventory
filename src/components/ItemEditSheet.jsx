@@ -5,17 +5,23 @@ import { toteService } from "../services/toteService";
 import { MAX_ITEM_NAME_LENGTH } from "../utils/constants";
 import { compressImage } from "../utils/images";
 import { itemQty } from "../utils/itemOps";
-import { validateImageFile, validateItemName } from "../utils/validation";
+import {
+  MAX_ITEM_NOTE_LENGTH,
+  validateImageFile,
+  validateItemName,
+  validateItemNote,
+} from "../utils/validation";
 
 // The +/- row has room for four digits; nobody keeps 10,000 of anything here.
 const MAX_COUNT = 9999;
 
 /**
- * Edit one item: name, exact count, photo, or move it to another tote.
+ * Edit one item: name, exact count, photo, note, or move it to another tote.
  *
- * Save hands back ONLY the fields that changed ({ name?, image?, qty? }),
- * so the caller can save a minimal updateItem op (and Undo only what was
- * touched). Nothing is written here — the caller owns persistence.
+ * Save hands back ONLY the fields that changed ({ name?, image?, qty?,
+ * note? }), so the caller can save a minimal updateItem op (and Undo only
+ * what was touched). A cleared note is handed back as `note: null` (the op
+ * removes the key). Nothing is written here — the caller owns persistence.
  *
  * Props:
  *   item        – the item as currently shown (original id value kept as-is)
@@ -28,12 +34,16 @@ export default function ItemEditSheet({ item, onSave, onClose, onMove, onViewPho
   const [name, setName] = useState(item.name ?? "");
   const [count, setCount] = useState(String(itemQty(item)));
   const [image, setImage] = useState(item.image ?? null);
+  const [note, setNote] = useState(
+    typeof item.note === "string" ? item.note : ""
+  );
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
   const baseId = useId();
   const nameId = `${baseId}-name`;
   const countId = `${baseId}-count`;
   const countHintId = `${baseId}-count-hint`;
+  const noteId = `${baseId}-note`;
 
   const handlePhotoPick = async (e) => {
     const file = e.target.files[0];
@@ -80,12 +90,20 @@ export default function ItemEditSheet({ item, onSave, onClose, onMove, onViewPho
       setError(`Count can be at most ${MAX_COUNT.toLocaleString("en-US")}.`);
       return;
     }
+    const noteCheck = validateItemNote(note);
+    if (!noteCheck.valid) {
+      setError(noteCheck.error);
+      return;
+    }
 
     const fields = {};
     const trimmedName = name.trim();
     if (trimmedName !== item.name) fields.name = trimmedName;
     if (qty !== itemQty(item)) fields.qty = qty;
     if ((image ?? null) !== (item.image ?? null)) fields.image = image;
+    const trimmedNote = note.trim();
+    const prevNote = typeof item.note === "string" ? item.note.trim() : "";
+    if (trimmedNote !== prevNote) fields.note = trimmedNote || null;
     onSave(fields);
   };
 
@@ -198,6 +216,32 @@ export default function ItemEditSheet({ item, onSave, onClose, onMove, onViewPho
         <p id={countHintId} className="mt-1 text-xs text-gray-500 dark:text-gray-400">
           How many are in the tote right now.
         </p>
+      </div>
+
+      <div className="mb-4">
+        <label
+          htmlFor={noteId}
+          className="mb-1 block text-sm font-semibold text-gray-700 dark:text-gray-300"
+        >
+          Note{" "}
+          <span className="font-normal text-gray-500 dark:text-gray-400">
+            (optional)
+          </span>
+        </label>
+        <textarea
+          id={noteId}
+          value={note}
+          onChange={(e) => {
+            setNote(e.target.value);
+            setError(null);
+          }}
+          rows={2}
+          maxLength={MAX_ITEM_NOTE_LENGTH}
+          placeholder="e.g. needs new batteries"
+          autoComplete="off"
+          autoCapitalize="sentences"
+          className="apple-input w-full resize-none leading-normal"
+        />
       </div>
 
       {error && (

@@ -47,29 +47,41 @@ export const restoreItem = (item, index) => (items) => {
 export const setItemImage = (id, image) => (items) =>
   asArray(items).map((it) => (it.id === id ? { ...it, image } : it));
 
-const EDITABLE_FIELDS = ["name", "image", "qty"];
+const EDITABLE_FIELDS = ["name", "image", "qty", "note"];
 
 /**
- * Edit one item: shallow-merge `fields` (only name / image / qty are taken;
- * anything else is ignored) into the item with this id. `qty` is an
- * absolute set, clamped at zero; a non-numeric qty is ignored. No-op when
- * the id is gone — the caller can tell by checking the saved list.
+ * Edit one item: shallow-merge `fields` (only name / image / qty / note are
+ * taken; anything else is ignored) into the item with this id. `qty` is an
+ * absolute set, clamped at zero; a non-numeric qty is ignored. `note` is
+ * trimmed; an empty, blank or null note REMOVES the key (so an item without
+ * a note never carries `note: ""`). No-op when the id is gone — the caller
+ * can tell by checking the saved list.
  */
 export const updateItem = (id, fields) => (items) => {
   const list = asArray(items);
   const patch = {};
+  let clearNote = false;
   EDITABLE_FIELDS.forEach((key) => {
     if (!fields || !Object.prototype.hasOwnProperty.call(fields, key)) return;
     if (key === "qty") {
       const q = Number(fields.qty);
       if (!Number.isFinite(q)) return;
       patch.qty = Math.max(0, q);
+    } else if (key === "note") {
+      const note = typeof fields.note === "string" ? fields.note.trim() : "";
+      if (note) patch.note = note;
+      else clearNote = true;
     } else {
       patch[key] = fields[key];
     }
   });
-  if (Object.keys(patch).length === 0) return list;
-  return list.map((it) => (it.id === id ? { ...it, ...patch } : it));
+  if (Object.keys(patch).length === 0 && !clearNote) return list;
+  return list.map((it) => {
+    if (it.id !== id) return it;
+    const next = { ...it, ...patch };
+    if (clearNote) delete next.note;
+    return next;
+  });
 };
 
 /** Apply several ops in order as one op. */
