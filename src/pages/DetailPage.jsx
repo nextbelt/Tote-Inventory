@@ -18,6 +18,7 @@ import TotePicker from "../components/TotePicker";
 import { useTotes } from "../hooks/useTotes";
 import { describePosition, describeSpot } from "../utils/constants";
 import { compressImage } from "../utils/images";
+import { prefersReducedMotion } from "../utils/motion";
 import RelativeTime from "../components/RelativeTime";
 import { formatDateTime, toteModifiedDate } from "../utils/time";
 import { toteService } from "../services/toteService";
@@ -43,11 +44,6 @@ const newId = () =>
 const EMPTY_ITEMS = [];
 const QTY_FLUSH_MS = 700;
 const HIGHLIGHT_MS = 3500;
-
-const prefersReducedMotion = () =>
-  typeof window !== "undefined" &&
-  typeof window.matchMedia === "function" &&
-  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /** The editable fields of an item as they are now (for Undo). */
 const snapshotFields = (item, keys) => {
