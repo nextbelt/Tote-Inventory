@@ -19,7 +19,7 @@ function setup() {
       origin={origin}
       describe={describePosition}
       onClose={() => {}}
-    />
+    />,
   );
 }
 
@@ -31,9 +31,11 @@ describe("LabelSheet", () => {
     const first = within(labels[0]);
     expect(first.getByText("Camping")).toBeInTheDocument();
     expect(first.getByText(describePosition("A3").path)).toBeInTheDocument();
-    expect(first.getByText("https://totes.example/?tote=1")).toBeInTheDocument();
     expect(
-      within(labels[1]).getByText("https://totes.example/?tote=22")
+      first.getByText("https://totes.example/?tote=1"),
+    ).toBeInTheDocument();
+    expect(
+      within(labels[1]).getByText("https://totes.example/?tote=22"),
     ).toBeInTheDocument();
     expect(labels[0].querySelector("svg")).not.toBeNull();
     expect(screen.getAllByTestId("label-preview")).toHaveLength(4);
@@ -45,10 +47,32 @@ describe("LabelSheet", () => {
     const labels = screen.getAllByTestId("label-print");
     expect(labels).toHaveLength(3);
     expect(
-      within(labels[0]).getByText("https://totes.example/?slot=A3")
+      within(labels[0]).getByText("https://totes.example/?slot=A3"),
     ).toBeInTheDocument();
     expect(within(labels[1]).getByText("B3")).toBeInTheDocument();
     expect(screen.queryByText("Camping")).toBeNull();
+  });
+
+  it("labels every provided slot, including empty ones", () => {
+    const positions = ["A1", "A3", "B3", "B4", "__config__", "A1"];
+    render(
+      <LabelSheet
+        totes={totes}
+        origin={origin}
+        describe={describePosition}
+        positions={positions}
+        onClose={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("switch", { name: /shelf-edge labels/i }));
+    const labels = screen.getAllByTestId("label-print");
+    expect(labels).toHaveLength(4); // deduped, reserved skipped
+    expect(
+      within(labels[0]).getByText("https://totes.example/?slot=A1"),
+    ).toBeInTheDocument();
+    expect(
+      within(labels[3]).getByText("https://totes.example/?slot=B4"),
+    ).toBeInTheDocument();
   });
 
   it("prints via window.print", () => {
@@ -61,8 +85,9 @@ describe("LabelSheet", () => {
 
   it("includes print CSS that hides the rest of the app", () => {
     setup();
-    const css = document.body.querySelector(".label-print-root style")
-      .textContent;
+    const css = document.body.querySelector(
+      ".label-print-root style",
+    ).textContent;
     expect(css).toMatch(/@media print/);
     expect(css).toMatch(/grid-template-columns: 1fr 1fr/);
   });
