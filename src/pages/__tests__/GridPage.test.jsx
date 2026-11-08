@@ -62,7 +62,7 @@ describe("GridPage restock button", () => {
     expect(screen.queryByRole("button", { name: /^Restock/ })).not.toBeInTheDocument();
   });
 
-  it("is compact (icon + count, labelled for screen readers) and opens the sheet", async () => {
+  it("reads 'Restock' plus the count at every width, and opens the sheet", async () => {
     state.totes = [
       tote([
         { id: 1, name: "Blue paint", qty: 0 },
@@ -73,14 +73,37 @@ describe("GridPage restock button", () => {
     renderGrid();
 
     const button = screen.getByRole("button", { name: "Restock, 2 items" });
+    expect(button).toHaveTextContent("Restock");
     expect(button).toHaveTextContent("2");
-    // The word is only shown from the sm breakpoint up so a 375 px header fits
+    // The label is never hidden behind a breakpoint: on a phone the word
+    // must be visible, not only in the aria-label
     const word = within(button).getByText("Restock");
-    expect(word).toHaveClass("hidden", "sm:inline");
-    // the title can never wrap
-    expect(screen.getByRole("heading", { level: 1 })).toHaveClass("whitespace-nowrap", "min-w-0");
+    expect(word.className).not.toMatch(/\bhidden\b|sr-only/);
+    expect(button).toHaveClass("min-h-[44px]");
 
     await user.click(button);
     expect(screen.getByRole("dialog", { name: "Restock" })).toBeInTheDocument();
+  });
+
+  it("sits on the status line below the search box (the title row has no room for a label on a phone)", () => {
+    state.totes = [tote([{ id: 1, name: "Blue paint", qty: 0 }])];
+    renderGrid();
+
+    const button = screen.getByRole("button", { name: "Restock, 1 item" });
+    const search = screen.getByLabelText("Search totes and items");
+    // Rendered after the search box in document order, i.e. not on the title row
+    expect(search.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // and shares a row with "Last updated"
+    expect(button.parentElement).toHaveTextContent(/Last updated/);
+    // The title still has its logo and never wraps
+    const title = screen.getByRole("heading", { level: 1 });
+    expect(title).toHaveClass("whitespace-nowrap", "min-w-0");
+  });
+
+  it("still shows the button when no tote has a timestamp", () => {
+    state.totes = [{ ...tote([{ id: 1, name: "Blue paint", qty: 0 }]), updated_at: undefined }];
+    renderGrid();
+    expect(screen.getByRole("button", { name: "Restock, 1 item" })).toBeInTheDocument();
+    expect(screen.queryByText(/Last updated/)).not.toBeInTheDocument();
   });
 });

@@ -304,7 +304,19 @@ export default function DetailPage({
     saveTimerRef.current = setTimeout(flushStaged, QTY_FLUSH_MS);
   };
 
+  /**
+   * While a delete is in flight nothing but +/- taps (which are held) may
+   * start: an edit, move or remove would save to a tote that is vanishing,
+   * or — if the delete then fails — land out of order with the held taps.
+   */
+  const blockedByDelete = () => {
+    if (!deletingRef.current) return false;
+    toast.show(`Deleting “${toteRef.current.name}”…`);
+    return true;
+  };
+
   const removeItem = (item) => {
+    if (blockedByDelete()) return;
     const index = items.findIndex((it) => it.id === item.id);
     // Land any staged +/- first so Undo brings back the quantity you saw
     flushStaged();
@@ -319,6 +331,7 @@ export default function DetailPage({
   // ------ edit one item ------
   /** Land staged +/- first so the sheet opens on the current count. */
   const openEdit = (item) => {
+    if (blockedByDelete()) return;
     flushStaged();
     setEditing(item);
   };
@@ -326,10 +339,24 @@ export default function DetailPage({
   /** One updateItem op with only the changed fields; Undo puts them back. */
   const handleEditSave = async (prev, fields) => {
     setEditing(null);
+    if (deletingRef.current) {
+      toast.show(
+        `Deleting “${toteRef.current.name}”, so the change to “${prev.name}” wasn't saved.`
+      );
+      return;
+    }
     const keys = Object.keys(fields);
     if (keys.length === 0) return;
-    // A staged delta must never land on top of an exact count, so flush it
-    // first — the per-tote write queue keeps the order (delta, then set).
+    // An exact count replaces whatever is staged for this item: the sheet
+    // opened on a count that already included the staged delta, so the
+    // delta must never land as well. DROP it rather than flush it — a flush
+    // can be held (delete in flight) and would then land AFTER the set.
+    if ("qty" in fields && stagedRef.current.has(prev.id)) {
+      const next = new Map(stagedRef.current);
+      next.delete(prev.id);
+      replaceStaged(next);
+    }
+    // Other items' staged taps land first (per-tote write queue keeps order)
     flushStaged();
     const saved = await runOp(updateItem(prev.id, fields));
     if (!saved) return;
@@ -350,6 +377,7 @@ export default function DetailPage({
   // ------ move one item to another tote ------
   /** From the edit sheet or directly: land staged taps, then pick a tote. */
   const openMoveItem = (item) => {
+    if (blockedByDelete()) return;
     flushStaged();
     setEditing(null);
     setMovingItem(item);
@@ -365,6 +393,7 @@ export default function DetailPage({
    */
   const handleMoveItem = async (item, dest) => {
     setMovingItem(null);
+    if (blockedByDelete()) return;
     const source = toteRef.current;
     const index = items.findIndex((it) => it.id === item.id);
     if (index === -1) {
