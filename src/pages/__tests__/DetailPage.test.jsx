@@ -1495,6 +1495,37 @@ describe("DetailPage tote notes, tags, swap and the bins", () => {
     expect(updateTote).toHaveBeenLastCalledWith(1, { tags: ["winter", "Fragile", "kids"] });
   });
 
+  it("tags: fixing a tag's capitalization ('xmas' → 'Xmas') is saved as a change; Undo puts the old spelling back", async () => {
+    setup([lantern]);
+    const updateTote = fakeUpdateTote();
+    ext.set((s) => ({
+      ...s,
+      totes: [{ ...tote, items: [lantern], tags: ["xmas", "kids"] }],
+      capabilities: caps({ tags: true }),
+      updateTote,
+    }));
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Edit tags" }));
+    const dialog = screen.getByRole("dialog", { name: "Tags" });
+    await user.click(within(dialog).getByRole("button", { name: "Remove tag xmas" }));
+    await user.type(within(dialog).getByLabelText("Add a tag"), "Xmas{Enter}");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(updateTote).toHaveBeenCalledWith(1, { tags: ["kids", "Xmas"] }));
+    expect(updateTote).toHaveBeenCalledTimes(1);
+    expect(toastMock.error).not.toHaveBeenCalled();
+    expect(screen.getByText("Xmas")).toBeInTheDocument();
+    expect(screen.queryByText("xmas")).not.toBeInTheDocument();
+
+    const [, opts] = toastMock.show.mock.calls.at(-1);
+    await act(async () => {
+      await opts.onAction();
+    });
+    expect(updateTote).toHaveBeenLastCalledWith(1, { tags: ["kids", "xmas"] });
+  });
+
   it("tags: when the other phone already made the same change, nothing is written (and no Undo is offered)", async () => {
     setup([lantern]);
     const updateTote = fakeUpdateTote();
@@ -1808,6 +1839,87 @@ describe("DetailPage tote notes, tags, swap and the bins", () => {
     // restore put Lantern in two totes at once
     expect(recordRemovedItems).not.toHaveBeenCalled();
     expect(db.items).toEqual([rope]);
+  });
+
+  it("remove → Undo when the stored list no longer had the item: nothing is put back (it would be in two totes), the user is told instead", async () => {
+    const { db } = setup([lantern, rope]);
+    const recordRemovedItems = vi.fn().mockResolvedValue({});
+    ext.set((s) => ({ ...s, recordRemovedItems }));
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    // Phone B moved Lantern to another tote; our realtime is behind
+    db.items = [rope];
+    await user.click(screen.getByRole("button", { name: "Remove Lantern" }));
+    await waitFor(() => expect(updateItems).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByText("Lantern")).not.toBeInTheDocument());
+
+    const [msg, opts] = toastMock.show.mock.calls.at(-1);
+    expect(msg).toBe("Removed “Lantern”");
+    await act(async () => {
+      await opts.onAction();
+    });
+    expect(toastMock.error).toHaveBeenCalledWith(
+      "“Lantern” was already moved or removed on the other phone."
+    );
+    // No restore was attempted, the stored list is untouched, nothing binned
+    expect(updateItems).toHaveBeenCalledTimes(1);
+    expect(db.items).toEqual([rope]);
+    expect(recordRemovedItems).not.toHaveBeenCalled();
+    expect(screen.queryByText("Lantern")).not.toBeInTheDocument();
+  });
+
+  it("remove → Undo puts back the row AS STORED (the other phone's count and note), not the stale row on screen", async () => {
+    const { db } = setup([lantern, rope]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    const theirs = { ...lantern, qty: 5, note: "new batteries" };
+    db.items = [theirs, rope];
+    await user.click(screen.getByRole("button", { name: "Remove Lantern" }));
+    await waitFor(() => expect(db.items).toEqual([rope]));
+
+    const [, opts] = toastMock.show.mock.calls.at(-1);
+    await act(async () => {
+      await opts.onAction();
+    });
+    await waitFor(() => expect(db.items).toEqual([theirs, rope]));
+    expect(toastMock.error).not.toHaveBeenCalled();
+    expect(screen.getByText("new batteries")).toBeInTheDocument();
+  });
+
+  it("remove → Undo tapped before the removal has landed waits for it, then restores (never races it)", async () => {
+    const { db } = setup([lantern, rope]);
+    let release;
+    const gate = new Promise((r) => (release = r));
+    updateItems.mockImplementation(async (id, op) => {
+      await gate;
+      db.items = op(db.items);
+      const saved = { ...tote, items: db.items, updated_at: new Date().toISOString() };
+      ext.set((s) => ({ ...s, totes: [saved] }));
+      return saved;
+    });
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Remove Lantern" }));
+    const [, opts] = toastMock.show.mock.calls.at(-1);
+    let undone = false;
+    const undo = opts.onAction().then(() => (undone = true));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(undone).toBe(false); // still waiting on the removal
+    expect(updateItems).toHaveBeenCalledTimes(1);
+    expect(db.items).toEqual([lantern, rope]);
+
+    await act(async () => {
+      release();
+      await undo;
+    });
+    expect(undone).toBe(true);
+    // The remove landed, then the restore put the row back where it was
+    expect(updateItems).toHaveBeenCalledTimes(2);
+    expect(db.items).toEqual([lantern, rope]);
+    expect(toastMock.error).not.toHaveBeenCalled();
   });
 
   it("remove: records the row AS STORED (the other phone's count and note), not the stale row on screen", async () => {
