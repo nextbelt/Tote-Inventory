@@ -121,35 +121,72 @@ describe("respondWithPhoto (cache first)", () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
-  it("fetches on a miss, stores an opaque copy via waitUntil, returns the original", async () => {
+  it("fetches on a miss with CORS, stores an ok copy via waitUntil, returns the original", async () => {
     const caches = makeCaches();
-    const net = fakeResponse({ status: 0, type: "opaque" });
+    const net = fakeResponse();
+    const fetchFn = vi.fn(async () => net);
     const waits = [];
-    const res = await P.respondWithPhoto(req(photoUrl(2)), caches, async () => net, {
+    const res = await P.respondWithPhoto(req(photoUrl(2)), caches, fetchFn, {
       waitUntil: (p) => waits.push(p),
     });
     expect(res).toBe(net);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(fetchFn).toHaveBeenCalledWith(photoUrl(2), { mode: "cors", credentials: "omit" });
     await Promise.all(waits);
     const cache = await caches.open(P.PHOTO_CACHE);
     expect(cache.store.get(photoUrl(2)).cloned).toBe(true);
   });
 
-  it("passes error responses through without caching them", async () => {
+  it("does not cache a CORS 404/502 so a transient failure is not permanent", async () => {
+    for (const status of [404, 502]) {
+      const caches = makeCaches();
+      const net = fakeResponse({ status });
+      const fetchFn = vi.fn(async () => net);
+      const waits = [];
+      const res = await P.respondWithPhoto(req(photoUrl(3)), caches, fetchFn, {
+        waitUntil: (p) => waits.push(p),
+      });
+      expect(res).toBe(net);
+      await Promise.all(waits);
+      expect((await caches.open(P.PHOTO_CACHE)).store.size).toBe(0);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("when CORS is blocked, falls back to the no-cors request and does not cache the opaque result", async () => {
     const caches = makeCaches();
-    const net = fakeResponse({ status: 404 });
+    const request = req(photoUrl(6));
+    const opaque = fakeResponse({ status: 0, type: "opaque" });
+    const fetchFn = vi.fn(async (arg) => {
+      if (arg !== request) throw new TypeError("cors blocked");
+      return opaque;
+    });
     const waits = [];
-    const res = await P.respondWithPhoto(req(photoUrl(3)), caches, async () => net, {
+    const res = await P.respondWithPhoto(request, caches, fetchFn, {
       waitUntil: (p) => waits.push(p),
     });
-    expect(res).toBe(net);
-    await Promise.all(waits);
+    expect(res).toBe(opaque);
+    expect(waits).toHaveLength(0);
     expect((await caches.open(P.PHOTO_CACHE)).store.size).toBe(0);
   });
 
-  it("rejects (image error) when offline and uncached, with a single fetch attempt", async () => {
+  it("a failure followed by a later success ends up cached (no poisoning)", async () => {
+    const caches = makeCaches();
+    const responses = [fakeResponse({ status: 502 }), fakeResponse()];
+    const fetchFn = vi.fn(async () => responses.shift());
+    const waits = [];
+    const ctx = { waitUntil: (p) => waits.push(p) };
+    await P.respondWithPhoto(req(photoUrl(7)), caches, fetchFn, ctx);
+    await P.respondWithPhoto(req(photoUrl(7)), caches, fetchFn, ctx);
+    await Promise.all(waits);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect((await caches.open(P.PHOTO_CACHE)).store.has(photoUrl(7))).toBe(true);
+  });
+
+  it("rejects (image error) when offline and uncached", async () => {
     const fetchFn = vi.fn().mockRejectedValue(new TypeError("offline"));
     await expect(P.respondWithPhoto(req(photoUrl(4)), makeCaches(), fetchFn)).rejects.toThrow("offline");
-    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(fetchFn).toHaveBeenCalledTimes(2); // cors attempt, then the original request
   });
 
   it("falls back to the network when the cache cannot be opened", async () => {
@@ -187,14 +224,12 @@ describe("prefetchPhotos", () => {
     expect([...(await caches.open(P.PHOTO_CACHE)).store.keys()]).toEqual([photoUrl(3)]);
   });
 
-  it("falls back to an opaque no-cors fetch when the cors fetch fails", async () => {
+  it("never caches an opaque prefetch result (status unknowable)", async () => {
     const caches = makeCaches();
-    const fetchFn = vi.fn(async (url, init) => {
-      if (init.mode === "cors") throw new TypeError("cors");
-      return fakeResponse({ status: 0, type: "opaque" });
-    });
-    expect(await P.prefetchPhotos([photoUrl(1)], caches, fetchFn)).toBe(1);
-    expect(fetchFn.mock.calls.map((c) => c[1].mode)).toEqual(["cors", "no-cors"]);
+    const fetchFn = vi.fn(async () => fakeResponse({ status: 0, type: "opaque" }));
+    expect(await P.prefetchPhotos([photoUrl(1)], caches, fetchFn)).toBe(0);
+    expect(fetchFn.mock.calls.map((c) => c[1].mode)).toEqual(["cors"]);
+    expect((await caches.open(P.PHOTO_CACHE)).store.size).toBe(0);
   });
 
   it("limits concurrency", async () => {
@@ -237,7 +272,7 @@ describe("service worker wiring (public/sw.js)", () => {
 
   it("serves bucket photos cache-first and leaves other cross-origin requests alone", async () => {
     const caches = makeCaches();
-    const net = fakeResponse({ status: 0, type: "opaque" });
+    const net = fakeResponse();
     const fetchFn = vi.fn(async () => net);
     const sw = loadServiceWorker({ caches, fetch: fetchFn });
 

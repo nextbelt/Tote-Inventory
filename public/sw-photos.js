@@ -111,8 +111,31 @@
       );
   }
 
+  // Fetch a photo with CORS so the response status is visible. Supabase
+  // public buckets send CORS headers, and a CORS response can still satisfy a
+  // no-cors <img>. Resolves with { res, verified }:
+  //  - verified true: a real (non-opaque) response, safe to judge by res.ok.
+  //  - verified false: the CORS fetch rejected (CORS blocked or network down),
+  //    so we fell back to the original no-cors request. That response is
+  //    opaque and its status is unknowable, so callers must NOT cache it
+  //    (cache-first would turn one transient 404/502 into a permanent one).
+  function fetchVerified(request, fetchFn) {
+    return fetchFn(request.url, { mode: "cors", credentials: "omit" }).then(
+      function (res) {
+        return { res: res, verified: true };
+      },
+      function () {
+        return fetchFn(request).then(function (res) {
+          return { res: res, verified: false };
+        });
+      }
+    );
+  }
+
   // Cache-first fetch for a photo request. `ctx.waitUntil` (optional) keeps
-  // the worker alive for the background cache write.
+  // the worker alive for the background cache write. Only verified-ok
+  // responses are stored; errors and unverifiable (opaque) ones are passed
+  // through uncached.
   function respondWithPhoto(request, cachesApi, fetchFn, ctx) {
     // If the cache itself is unavailable, fall back to a plain network fetch
     // (which also surfaces an offline failure to the <img>).
@@ -124,14 +147,15 @@
       .then(function (cache) {
         if (!cache) return fetchFn(request);
         return cache
-          .match(request)
+          .match(request, { ignoreVary: true })
           .catch(function () {
             return undefined;
           })
           .then(function (hit) {
             if (hit) return hit;
-            return fetchFn(request).then(function (res) {
-              if (isCacheable(res)) {
+            return fetchVerified(request, fetchFn).then(function (out) {
+              var res = out.res;
+              if (out.verified && res.type !== "opaque" && isCacheable(res)) {
                 var write = storePhoto(cache, request, res.clone());
                 if (ctx && ctx.waitUntil) ctx.waitUntil(write);
               }
@@ -162,24 +186,21 @@
         var stored = 0;
 
         function fetchOne(url) {
-          // CORS first so a failed (404) response has a visible status and
-          // is not cached; Supabase public buckets send CORS headers. Fall
-          // back to an opaque no-cors fetch if that fails.
-          return fetchFn(url, { mode: "cors", credentials: "omit" }).catch(
-            function () {
-              return fetchFn(url, { mode: "no-cors", credentials: "omit" });
-            }
-          );
+          // CORS so a failed (404) response has a visible status and is not
+          // cached. No opaque fallback: an unverifiable response must not be
+          // stored under a cache-first strategy.
+          return fetchFn(url, { mode: "cors", credentials: "omit" });
         }
 
         function worker() {
           if (!queue.length) return Promise.resolve();
           var url = queue.shift();
           return cache
-            .match(url)
+            .match(url, { ignoreVary: true })
             .then(function (hit) {
               if (hit) return;
               return fetchOne(url).then(function (res) {
+                if (res.type === "opaque") return;
                 return storePhoto(cache, url, res, max).then(function (ok) {
                   if (ok) stored++;
                 });
