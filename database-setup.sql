@@ -4,6 +4,9 @@
 -- ⚠️  WARNING: This drops and recreates the table — ALL DATA WILL BE LOST.
 -- For production changes use versioned migrations instead.
 
+-- swap_tote_positions() returns SETOF totes, so it depends on the table's
+-- row type and must go first — otherwise DROP TABLE fails on a re-run.
+DROP FUNCTION IF EXISTS public.swap_tote_positions(bigint, bigint);
 DROP TABLE IF EXISTS totes;
 
 -- Positions starting with "__" are reserved app rows (layout settings at

@@ -12,8 +12,10 @@ import {
   NO_CAPABILITIES,
   storageMode,
   toteService,
+  UserFacingError,
 } from "../services/toteService";
 import { buildWalls, DEFAULT_LAYOUT, wallPositions } from "../utils/constants";
+import { reconcileQtyOp } from "../utils/qtyOps";
 
 const ToteContext = createContext(null);
 
@@ -130,7 +132,10 @@ export function ToteProvider({ children }) {
       // `deleted` and `capabilities` belong to the same load as `totes`, so
       // they sit inside the same guard: a stale or cache-sourced response can
       // never switch capabilities back off or overwrite `deleted` with a list
-      // from before the last deleteTote.
+      // from before the last deleteTote. Any handler that patches state from
+      // realtime payloads instead of reloading must use
+      // utils/realtime.applyRealtimeChange (reserved "__" positions =
+      // removal, never an insert).
       setTotes(Array.isArray(data) ? data : []);
       setSource(src);
       if (savedLayout) setLayout({ ...DEFAULT_LAYOUT, ...savedLayout });
@@ -394,6 +399,12 @@ export function ToteProvider({ children }) {
    * by the newest tombstone with the same name and spot (the one the user
    * just deleted). Only when no tombstone exists any more is the tote
    * re-created from the snapshot.
+   *
+   * The snapshot's quantities win over the stored ones for items both have:
+   * the detail page puts still-staged +/- taps into the Undo snapshot, and
+   * those never reached the database before the delete. They are re-applied
+   * as an idempotent op through updateItems (never a snapshot write), so an
+   * item the other phone added or removed meanwhile is left alone.
    */
   const restoreTote = useCallback(
     async (tote) => {
@@ -405,10 +416,23 @@ export function ToteProvider({ children }) {
         if (match) id = match.id;
       }
       if (id !== undefined && id !== null) {
+        let row = null;
         try {
-          return await restoreDeletedTote(id);
+          row = await restoreDeletedTote(id);
         } catch (err) {
           if (err?.code !== "NO_TOMBSTONE") throw err;
+        }
+        if (row) {
+          const op = reconcileQtyOp(tote?.items, row.items);
+          if (!op) return row;
+          try {
+            return await updateItems(row.id, op);
+          } catch {
+            // The tote IS back — only the staged taps didn't land
+            throw new UserFacingError(
+              `Put “${row.name}” back, but its latest quantity changes didn't save. Please check it.`
+            );
+          }
         }
       }
       return saveTote(
@@ -416,7 +440,7 @@ export function ToteProvider({ children }) {
         true
       );
     },
-    [restoreDeletedTote, saveTote]
+    [restoreDeletedTote, saveTote, updateItems]
   );
 
   /** Swap two totes' spots in one step (cloud: one database transaction). */

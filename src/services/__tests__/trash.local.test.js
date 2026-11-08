@@ -79,6 +79,19 @@ describe("local mode: soft delete, restore, purge", () => {
     await expect(toteService.restoreDeletedTote(42)).rejects.toMatchObject({ code: "NO_TOMBSTONE" });
   });
 
+  it("updateTote can't revive a tombstone (stale rename/move → 'couldn't find')", async () => {
+    await toteService.deleteTote(1);
+    await toteService.saveTote({ name: "Squatter", position: "B3", items: [] }, true);
+    await expect(toteService.updateTote(1, { name: "Camp", position: "B3" })).rejects.toThrow(
+      /find that tote/i
+    );
+    const stored = read();
+    expect(stored.find((t) => t.id === 1).position).toBe("__deleted__:B3:1");
+    expect(stored.filter((t) => t.position === "B3")).toHaveLength(1);
+    const { deleted } = await toteService.getTotes();
+    expect(deleted.map((d) => d.id)).toEqual([1]); // still restorable
+  });
+
   it("purgeDeletedTote removes a tombstone but never a live tote", async () => {
     await toteService.deleteTote(1);
     await toteService.purgeDeletedTote(2);

@@ -249,6 +249,45 @@ describe("soft delete", () => {
   });
 });
 
+describe("updateTote never revives a soft-deleted tote", () => {
+  const tomb = { ...camping, position: "__deleted__:B3:1", updated_at: daysAgo(1) };
+
+  it("a rename/move from a stale page reports 'couldn't find' and leaves the tombstone", async () => {
+    // Phone A deleted tote 1 and put a new tote at B3; phone B still has the
+    // form open and saves { name, position: "B3" }.
+    const squatter = { ...sports, id: 3, position: "B3" };
+    const { state } = await setup([tomb, squatter]);
+    await expect(
+      toteService.updateTote(1, { name: "Camp", position: "B3" })
+    ).rejects.toThrow(/find that tote/i);
+    const row = state.rows.find((r) => r.id === 1);
+    expect(row.position).toBe("__deleted__:B3:1");
+    expect(row.name).toBe("Camping Gear");
+    expect(state.rows.filter((r) => r.position === "B3")).toHaveLength(1);
+    // The write itself carries the reserved-row exclusion (no read-then-write race)
+    expect(state.updates).toHaveLength(1);
+    expect(state.updates[0].filters).toEqual([
+      ["eq", "id", 1],
+      ["not_match", "position", "^__"],
+    ]);
+  });
+
+  it("an unknown id is also 'couldn't find'; a live tote still saves", async () => {
+    const { state } = await setup([withCols(camping)]);
+    await expect(toteService.updateTote(99, { name: "x" })).rejects.toThrow(/find that tote/i);
+    const saved = await toteService.updateTote(1, { name: "Camp" });
+    expect(saved.name).toBe("Camp");
+    expect(state.rows[0].name).toBe("Camp");
+  });
+
+  it("the settings and bin rows can't be patched as totes either", async () => {
+    const config = { id: 10, name: "cfg", position: "__config__", items: { leftShelves: 3 }, updated_at: T0 };
+    const { state } = await setup([camping, config]);
+    await expect(toteService.updateTote(10, { position: "A1" })).rejects.toThrow(/find that tote/i);
+    expect(state.rows.find((r) => r.id === 10).position).toBe("__config__");
+  });
+});
+
 describe("restoreDeletedTote / purgeDeletedTote", () => {
   const tomb = { ...camping, position: "__deleted__:B3:1", updated_at: daysAgo(1) };
 
@@ -334,6 +373,22 @@ describe("removed-items bin", () => {
 
     const list = await toteService.listRemovedItems();
     expect(list).toHaveLength(2);
+  });
+
+  it("an item with an embedded photo is binned without the data-URI (cache/quota safety)", async () => {
+    const dataUri = `data:image/jpeg;base64,${"a".repeat(256)}`;
+    const vase = { id: "v", name: "Vase", image: dataUri };
+    const { state } = await setup([camping], { uniquePosition: true });
+    const row = await toteService.recordRemovedItems(camping, [vase]);
+    expect(row.items[0].item).toEqual({ id: "v", name: "Vase", image: null });
+    expect(JSON.stringify(state.inserts)).not.toContain("data:");
+
+    // Appends go through the same path
+    await toteService.recordRemovedItems(camping, [{ ...vase, id: "v2" }]);
+    expect(JSON.stringify(state.updates)).not.toContain("data:");
+    // and the offline cache never holds one either
+    await toteService.getTotes();
+    expect(localStorage.getItem("totes-cache")).not.toContain("data:");
   });
 
   it("two phones racing to create the bin: the loser re-reads and appends to the winner's row", async () => {

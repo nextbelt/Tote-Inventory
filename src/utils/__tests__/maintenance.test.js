@@ -103,4 +103,21 @@ describe("reserved rows are never tidy-up candidates", () => {
     expect(findEmbeddedPhotos(reserved)).toEqual([]);
     expect(embeddedPhotoBytes(reserved)).toBe(0);
   });
+
+  it("stripForCache strips the removed-items bin's nested entry.item.image too", () => {
+    const stripped = stripForCache(reserved);
+    const bin = stripped.find((t) => t.position === "__removed_items__");
+    expect(bin.items[0].item.image).toBeNull();
+    expect(bin.items[0].image).toBeNull();
+    expect(bin.items[0].id).toBe("1:x:t");
+    expect(JSON.stringify(stripped)).not.toContain("data:");
+    // input untouched; rows without embedded photos keep their reference
+    expect(reserved[2].items[0].item.image).toBe(dataUri);
+    expect(stripped[0]).toBe(reserved[0]);
+  });
+
+  it("stripForCache leaves the settings row (items is an object) alone", () => {
+    const config = { id: 1, position: "__config__", items: { leftShelves: 3 } };
+    expect(stripForCache([config])[0]).toBe(config);
+  });
 });

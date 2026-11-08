@@ -9,8 +9,10 @@
 --   2. totes.notes  text    up to 500 characters   (e.g. "lid cracked")
 --   3. swap_tote_positions(a_id, b_id) — swaps two totes' spots in ONE
 --      transaction so UNIQUE(position) is never violated half-way
---   4. UNIQUE(position) — added only if missing AND there are no duplicate
---      rows left (otherwise a NOTICE tells you to run Tidy Up first)
+--   4. UNIQUE(position) — added only if missing AND no position is
+--      duplicated (otherwise a NOTICE lists the duplicates: real spots are
+--      fixed with the in-app Tidy Up, hidden "__" rows with the merge
+--      snippet in MAINTENANCE.md)
 --   5. tells PostgREST to reload its schema cache so the app sees the
 --      new columns/function right away
 --
@@ -109,11 +111,18 @@ GRANT EXECUTE ON FUNCTION public.swap_tote_positions(bigint, bigint)
 
 -- 4. UNIQUE(position), guarded ---------------------------------------------
 -- Fresh installs already have it (database-setup.sql). The original live
--- table predates it and may still hold hidden duplicate rows; those must be
--- removed with the in-app Tidy Up first, so this never fails half-way.
+-- table predates it and may still hold duplicate rows, so this never fails
+-- half-way: it adds the constraint only when no position is duplicated and
+-- otherwise says exactly which ones are, and how to fix each kind:
+--   - real spots (A3, LW2, …): the in-app Tidy Up removes the older copies
+--   - hidden app rows (positions starting with "__", e.g. two "__config__"
+--     rows from both phones saving the layout at the same moment): Tidy Up
+--     never touches those — use the "Merge duplicate hidden rows" snippet
+--     in MAINTENANCE.md
 DO $$
 DECLARE
-  dup_positions integer;
+  real_dups     text;
+  reserved_dups text;
 BEGIN
   IF EXISTS (
     SELECT 1
@@ -128,22 +137,41 @@ BEGIN
   ) THEN
     RAISE NOTICE 'UNIQUE(position) is already in place — nothing to do.';
   ELSE
-    SELECT count(*) INTO dup_positions
+    SELECT string_agg(d.position || ' (' || d.n || ' rows)', ', ' ORDER BY d.position)
+      INTO real_dups
     FROM (
-      SELECT position
+      SELECT position, count(*) AS n
       FROM public.totes
+      WHERE left(position, 2) <> '__'
       GROUP BY position
       HAVING count(*) > 1
     ) d;
 
-    IF dup_positions > 0 THEN
-      RAISE NOTICE
-        'Skipped UNIQUE(position): % spot(s) still have duplicate rows. Open the app → Tidy Up → "Remove hidden duplicates", then run this script again.',
-        dup_positions;
-    ELSE
+    SELECT string_agg(d.position || ' (' || d.n || ' rows)', ', ' ORDER BY d.position)
+      INTO reserved_dups
+    FROM (
+      SELECT position, count(*) AS n
+      FROM public.totes
+      WHERE left(position, 2) = '__'
+      GROUP BY position
+      HAVING count(*) > 1
+    ) d;
+
+    IF real_dups IS NULL AND reserved_dups IS NULL THEN
       ALTER TABLE public.totes
         ADD CONSTRAINT totes_position_unique UNIQUE (position);
       RAISE NOTICE 'Added UNIQUE(position).';
+    ELSE
+      IF real_dups IS NOT NULL THEN
+        RAISE NOTICE
+          'Skipped UNIQUE(position): these spots still have duplicate rows: %. Open the app → Tidy Up → "Remove hidden duplicates", then run this script again.',
+          real_dups;
+      END IF;
+      IF reserved_dups IS NOT NULL THEN
+        RAISE NOTICE
+          'Skipped UNIQUE(position): these hidden app rows are duplicated: %. Tidy Up does not touch them — run the "Merge duplicate hidden rows" snippet in MAINTENANCE.md, then run this script again.',
+          reserved_dups;
+      END IF;
     END IF;
   END IF;
 END

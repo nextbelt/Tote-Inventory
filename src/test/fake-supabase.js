@@ -21,6 +21,8 @@ function matches(row, filters) {
   return filters.every(([kind, col, val]) => {
     if (kind === "is") return val === null ? row[col] == null : row[col] === val;
     if (kind === "in") return val.includes(row[col]);
+    // .not(col, "match", regex) → PostgREST `not.match.` (SQL `!~`)
+    if (kind === "not_match") return !new RegExp(val).test(String(row[col] ?? ""));
     return row[col] === val;
   });
 }
@@ -145,6 +147,11 @@ export function makeFakeSupabase(rows, options = {}) {
       },
       in(col, vals) {
         q.filters.push(["in", col, vals]);
+        return api;
+      },
+      not(col, op, val) {
+        if (op !== "match") throw new Error(`fake supabase: unsupported not.${op}`);
+        q.filters.push(["not_match", col, val]);
         return api;
       },
       maybeSingle() {
