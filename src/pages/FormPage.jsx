@@ -127,13 +127,33 @@ export default function FormPage({ editTote, position, onBack, onSaved }) {
         }
         const itemsOp = diffItemsOp(editTote.items, items);
         if (itemsOp) {
-          await updateItems(editTote.id, itemsOp);
-          // Items taken off the list go to Recently deleted — best effort,
-          // only once the removal has actually landed: a failure to record
-          // is neither shown nor allowed to hold up the save.
+          // Items taken off the list go to Recently deleted — but only the
+          // ones the op REALLY removes from the stored list, as they are
+          // stored. This form may have been open for minutes: an item the
+          // other phone moved elsewhere since is no longer here (recording
+          // it would let a restore duplicate it), and one they re-counted
+          // must be remembered with their count. So the op handed to the
+          // service notes what it found; the service re-runs it on every
+          // CAS retry, so the last (successful) attempt is what counts.
+          // Set compares ids with SameValueZero, so 7 and "7" stay apart.
           const kept = new Set(items.map((it) => it.id));
-          const removed = (editTote.items || []).filter((it) => !kept.has(it.id));
-          if (removed.length > 0) {
+          const removedIds = new Set(
+            (editTote.items || [])
+              .filter((it) => !kept.has(it.id))
+              .map((it) => it.id)
+          );
+          let actuallyRemoved = [];
+          const op = (current) => {
+            actuallyRemoved = (Array.isArray(current) ? current : []).filter(
+              (it) => removedIds.has(it.id)
+            );
+            return itemsOp(current);
+          };
+          await updateItems(editTote.id, op);
+          // Best effort, only once the removal has actually landed: a
+          // failure to record is neither shown nor allowed to hold up the save.
+          if (actuallyRemoved.length > 0) {
+            const removed = actuallyRemoved;
             Promise.resolve()
               .then(() =>
                 recordRemovedItems(

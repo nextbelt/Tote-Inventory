@@ -31,7 +31,11 @@ describe("FormPage (edit mode) saves only what changed", () => {
   beforeEach(() => {
     store.saveTote.mockReset().mockResolvedValue({});
     store.updateTote.mockReset().mockResolvedValue({});
-    store.updateItems.mockReset().mockResolvedValue({});
+    // Like the service: the op is applied to the STORED list (here, the
+    // list the form opened on) and the saved row comes back
+    store.updateItems
+      .mockReset()
+      .mockImplementation(async (id, op) => ({ ...opened, items: op(opened.items) }));
     store.recordRemovedItems.mockReset().mockResolvedValue({});
   });
 
@@ -127,6 +131,65 @@ describe("FormPage (edit mode) saves only what changed", () => {
     expect(store.updateItems.mock.invocationCallOrder[0]).toBeLessThan(
       store.recordRemovedItems.mock.invocationCallOrder[0]
     );
+  });
+
+  it("records only what the op really removed from the STORED list, as stored — not the snapshot the form opened on", async () => {
+    // While the form was open the other phone moved Lantern to another tote
+    // and counted Rope up to 3; this phone's copy is still the old one
+    store.updateItems.mockImplementation(async (id, op) => ({
+      ...opened,
+      items: op([{ ...rope, qty: 3 }]),
+    }));
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+    render(<FormPage editTote={opened} position="B3" onBack={vi.fn()} onSaved={onSaved} />);
+
+    await user.click(screen.getByRole("button", { name: "Remove Lantern" }));
+    await user.click(screen.getByRole("button", { name: "Remove Rope" }));
+    await user.click(screen.getByRole("button", { name: "Save Changes" }));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    await waitFor(() => expect(store.recordRemovedItems).toHaveBeenCalledTimes(1));
+    // Lantern wasn't here any more (restoring it would duplicate the copy in
+    // the other tote); Rope is remembered with THEIR count, not the stale 1
+    expect(store.recordRemovedItems).toHaveBeenCalledWith(
+      { id: 1, name: "Camping Gear", position: "B3" },
+      [{ ...rope, qty: 3 }]
+    );
+  });
+
+  it("records nothing when every item taken off the list was already gone from the stored row", async () => {
+    store.updateItems.mockImplementation(async (id, op) => ({ ...opened, items: op([rope]) }));
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+    render(<FormPage editTote={opened} position="B3" onBack={vi.fn()} onSaved={onSaved} />);
+
+    await user.click(screen.getByRole("button", { name: "Remove Lantern" }));
+    await user.click(screen.getByRole("button", { name: "Save Changes" }));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(store.updateItems).toHaveBeenCalledTimes(1);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(store.recordRemovedItems).not.toHaveBeenCalled();
+  });
+
+  it("matches removed items by their ORIGINAL id type: removing legacy item 7 never records item \"7\"", async () => {
+    const legacy = { id: 7, name: "Old drill", qty: 1 };
+    const impostor = { id: "7", name: "Impostor", qty: 1 };
+    const mixed = { ...opened, items: [legacy, impostor] };
+    store.updateItems.mockImplementation(async (id, op) => ({ ...mixed, items: op(mixed.items) }));
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+    render(<FormPage editTote={mixed} position="B3" onBack={vi.fn()} onSaved={onSaved} />);
+
+    await user.click(screen.getByRole("button", { name: "Remove Old drill" }));
+    await user.click(screen.getByRole("button", { name: "Save Changes" }));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    await waitFor(() => expect(store.recordRemovedItems).toHaveBeenCalledTimes(1));
+    expect(store.recordRemovedItems.mock.calls[0][1]).toEqual([legacy]);
+    const [, op] = store.updateItems.mock.calls[0];
+    expect(op([legacy, impostor])).toEqual([impostor]);
   });
 
   it("a rename alone, or adding items only, records nothing", async () => {

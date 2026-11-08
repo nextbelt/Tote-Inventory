@@ -42,6 +42,7 @@ import {
   normalizeTags,
   validateImageFile,
   validateNotes,
+  validateTags,
 } from "../utils/validation";
 import AutoGrowTextarea from "../components/AutoGrowTextarea";
 import ParsePreview from "../components/ParsePreview";
@@ -77,6 +78,31 @@ function wallSlots(wall) {
 }
 
 const sameList = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+const lowerTag = (tag) => tag.toLocaleLowerCase();
+
+/**
+ * What the tag editor changed, as a delta against the list it opened on —
+ * so it can be re-applied to whatever the tags are NOW (the other phone may
+ * have edited them while the sheet was open) instead of replacing them.
+ * Tags compare case-insensitively, like normalizeTags dedupes them.
+ */
+const diffTags = (opened, next) => {
+  const openedKeys = new Set(opened.map(lowerTag));
+  const nextKeys = new Set(next.map(lowerTag));
+  return {
+    added: next.filter((t) => !openedKeys.has(lowerTag(t))),
+    removed: opened.filter((t) => !nextKeys.has(lowerTag(t))),
+  };
+};
+
+/** `current` without `removed` (by case-insensitive key), then `added`. */
+const applyTagDelta = (current, { added, removed }) => {
+  const gone = new Set(removed.map(lowerTag));
+  return normalizeTags([
+    ...current.filter((t) => !gone.has(lowerTag(t))),
+    ...added,
+  ]);
+};
 
 export default function DetailPage({
   tote: initialTote,
@@ -140,6 +166,10 @@ export default function DetailPage({
   const deletingRef = useRef(false);
   const toteRef = useRef(tote);
   toteRef.current = tote;
+  // Latest store, for handlers that run later than the render they came
+  // from (toast Undo, a confirm tapped after a realtime refresh)
+  const totesRef = useRef(totes);
+  totesRef.current = totes;
 
   const items = useMemo(
     () =>
@@ -157,11 +187,20 @@ export default function DetailPage({
   const parsedDraft = useMemo(() => parseItems(newItemName), [newItemName]);
   const draftCount = parsedDraft.items.length;
   const [sheet, setSheet] = useState(null); // "move" | "delete" | null
+  // Where this tote was when the Move sheet opened: a swap confirmed later
+  // must still be about THAT spot, or it is refused
+  const [moveFrom, setMoveFrom] = useState(null);
   // Occupied slot tapped in the Move sheet: the tote to swap places with
   const [swapWith, setSwapWith] = useState(null);
-  const [tagEditorOpen, setTagEditorOpen] = useState(false);
+  // Tag editor: null when closed, else the list it opened on (its changes
+  // are saved as a delta against the live tags, never as a replacement)
+  const [tagEditor, setTagEditor] = useState(null);
   const [notesEditing, setNotesEditing] = useState(false);
   const [notesDraft, setNotesDraft] = useState("");
+  // The (normalized) note the editor opened on, to spot the other phone's
+  // edit before overwriting it — and their text once such a clash is found
+  const [notesOpenedOn, setNotesOpenedOn] = useState(null);
+  const [notesConflict, setNotesConflict] = useState(null);
   const [savingNotes, setSavingNotes] = useState(false);
   const [lightbox, setLightbox] = useState(null);
   // Item being edited / moved: a snapshot of the row as it was tapped, so
@@ -184,14 +223,19 @@ export default function DetailPage({
    *
    * Pass `key` to take over an overlay entry that is already showing (see
    * handleMoveItem); it is dropped when this save settles.
+   *
+   * Pass `persist` to hand the service a DIFFERENT function from the one
+   * the overlay applies at render time — e.g. one that also notes what it
+   * found in the authoritative list (the service re-runs it on every CAS
+   * retry, so the last, successful attempt is what it saw).
    */
   const runOp = useCallback(
-    async (apply, { onError, key = newId() } = {}) => {
+    async (apply, { onError, key = newId(), persist } = {}) => {
       setInflight((prev) =>
         prev.some((op) => op.key === key) ? prev : [...prev, { key, apply }]
       );
       try {
-        return await updateItems(toteRef.current.id, apply);
+        return await updateItems(toteRef.current.id, persist ?? apply);
       } catch (err) {
         if (onError) onError(err);
         else toast.error(err.message);
@@ -386,10 +430,22 @@ export default function DetailPage({
     const index = items.findIndex((it) => it.id === item.id);
     // Land any staged +/- first so Undo brings back the quantity you saw
     flushStaged();
-    runOp(removeItemOp(item.id)).then((saved) => {
-      // `item` is the row as shown (staged count included, which the flush
-      // above has just landed) — what the bin should remember
-      if (saved) recordRemoval([item]);
+    // The bin must remember what this op REALLY took out of the stored
+    // list, not the row on screen: if the other phone moved or removed it
+    // already, the op finds nothing, and recording the stale row would let
+    // a later restore put the item in two totes. So the op handed to the
+    // service notes the row it found (the overlay keeps the plain op —
+    // render-time applications must not overwrite this).
+    const remove = removeItemOp(item.id);
+    let hit = null;
+    const persist = (list) => {
+      hit = (Array.isArray(list) ? list : []).find((it) => it.id === item.id) ?? null;
+      return remove(list);
+    };
+    runOp(remove, { persist }).then((saved) => {
+      // `hit` carries the stored count, which includes the staged taps the
+      // flush above landed first (same per-tote write queue)
+      if (saved && hit) recordRemoval([hit]);
     });
     toast.show(`Removed “${item.name}”`, {
       actionLabel: "Undo",
@@ -536,10 +592,23 @@ export default function DetailPage({
   const openNotes = () => {
     if (blockedByDelete()) return;
     setNotesDraft(typeof tote.notes === "string" ? tote.notes : "");
+    setNotesOpenedOn(normalizeNotes(tote.notes));
+    setNotesConflict(null);
     setNotesEditing(true);
   };
 
-  const handleSaveNotes = async () => {
+  const closeNotes = () => {
+    setNotesConflict(null);
+    setNotesEditing(false);
+  };
+
+  /**
+   * Save the draft. updateTote is a plain last-writer-wins patch, so before
+   * overwriting, check the note the other phone may have saved while the
+   * editor was open: if it differs from what this editor opened on, show
+   * their text and let the user choose (`force` is that choice).
+   */
+  const handleSaveNotes = async ({ force = false } = {}) => {
     if (blockedByDelete()) return;
     const notes = normalizeNotes(notesDraft);
     const check = validateNotes(notes);
@@ -547,14 +616,20 @@ export default function DetailPage({
       toast.error(check.error);
       return;
     }
-    if (notes === normalizeNotes(tote.notes)) {
-      setNotesEditing(false);
+    const theirs = normalizeNotes(toteRef.current.notes);
+    // Already says this (or the user changed nothing): nothing to write
+    if (notes === theirs || notes === notesOpenedOn) {
+      closeNotes();
+      return;
+    }
+    if (theirs !== notesOpenedOn && !force) {
+      setNotesConflict(theirs);
       return;
     }
     setSavingNotes(true);
     try {
       await updateTote(tote.id, { notes });
-      setNotesEditing(false);
+      closeNotes();
     } catch (err) {
       // Keep the editor open so what was typed isn't lost
       toast.error(err.message);
@@ -564,19 +639,48 @@ export default function DetailPage({
   };
 
   // ------ tags (capabilities.tags) ------
-  const handleSaveTags = async (next) => {
-    setTagEditorOpen(false);
+  const openTagEditor = () => {
     if (blockedByDelete()) return;
-    const before = toteTags;
-    if (sameList(next, before)) return;
+    setTagEditor({ opened: toteTags });
+  };
+
+  /**
+   * The editor hands back a full list, but only its CHANGES are saved: the
+   * tags it added and removed, applied to the tags as they are now. So a tag
+   * the other phone added while the sheet was open survives, and Undo takes
+   * back only this edit (not theirs).
+   */
+  const handleSaveTags = async (next) => {
+    const opened = tagEditor?.opened ?? toteTags;
+    setTagEditor(null);
+    if (blockedByDelete()) return;
+    const delta = diffTags(opened, next);
+    if (delta.added.length === 0 && delta.removed.length === 0) return;
+    const current = normalizeTags(toteRef.current.tags);
+    const merged = applyTagDelta(current, delta);
+    if (sameList(merged, current)) return; // the other phone already did it
+    const check = validateTags(merged);
+    if (!check.valid) {
+      toast.error(check.error);
+      return;
+    }
+    // What this save really changes (a tag the other phone had already
+    // added isn't ours to take back on Undo)
+    const effective = diffTags(current, merged);
     try {
-      await updateTote(tote.id, { tags: next });
-      toast.show(next.length === 0 ? "Tags removed" : "Tags updated", {
+      await updateTote(tote.id, { tags: merged });
+      toast.show(merged.length === 0 ? "Tags removed" : "Tags updated", {
         actionLabel: "Undo",
-        onAction: () =>
-          updateTote(tote.id, { tags: before }).catch((err) =>
+        onAction: () => {
+          // Same delta backwards, again on top of whatever the tags are NOW
+          const reverted = applyTagDelta(normalizeTags(toteRef.current.tags), {
+            added: effective.removed,
+            removed: effective.added,
+          });
+          return updateTote(tote.id, { tags: reverted }).catch((err) =>
             toast.error(err.message)
-          ),
+          );
+        },
       });
     } catch (err) {
       toast.error(err.message);
@@ -584,10 +688,20 @@ export default function DetailPage({
   };
 
   // ------ move / swap / delete ------
+  const openMoveSheet = () => {
+    setMoveFrom(tote.position);
+    setSwapWith(null);
+    setSheet("move");
+  };
+
   const closeMoveSheet = () => {
     setSheet(null);
     setSwapWith(null);
   };
+
+  /** The tote at `position` in the LATEST store (undefined when empty). */
+  const toteAt = (position) =>
+    totesRef.current.find((t) => t.position === position);
 
   const handleMove = async (position) => {
     const from = tote.position;
@@ -606,18 +720,53 @@ export default function DetailPage({
     }
   };
 
-  /** Trade spots with `other` in one step (cloud: one transaction). */
+  /**
+   * Trade spots with `other` in one step (cloud: one transaction).
+   *
+   * `other` is the occupant as it was when its slot was tapped, and the
+   * confirm sheet promised THAT trade (this tote to `other`'s spot, `other`
+   * here). swapTotes trades whatever spots the two hold at call time, so if
+   * either tote moved on the other phone in between, the trade would be a
+   * different one than the user confirmed — refuse it and say why. Undo is
+   * held to the same promise: it only swaps back while both are still where
+   * the swap left them, or the physical totes and printed labels would end
+   * up not matching the app.
+   */
   const handleSwap = async (other) => {
     closeMoveSheet();
+    const from = moveFrom ?? tote.position;
+    const to = other.position;
+    const me = toteRef.current;
+    if (me.position !== from) {
+      toast.error(
+        `“${me.name}” was moved on the other phone, so nothing was swapped.`
+      );
+      return;
+    }
+    if (toteAt(to)?.id !== other.id) {
+      toast.error(
+        `“${other.name}” was moved on the other phone, so nothing was swapped.`
+      );
+      return;
+    }
     try {
       await swapTotes(tote.id, other.id);
-      const { path } = describePosition(other.position);
+      const { path } = describePosition(to);
       toast.show(`Swapped with “${other.name}” — now in ${path}`, {
         actionLabel: "Undo",
-        // Swapping the same pair again puts both back; positions only, so
-        // item edits made meanwhile on either tote are untouched
-        onAction: () =>
-          swapTotes(tote.id, other.id).catch((err) => toast.error(err.message)),
+        // Positions only, so item edits made meanwhile on either tote are
+        // untouched — but only while both are still where the swap put them
+        onAction: () => {
+          if (toteAt(to)?.id !== tote.id || toteAt(from)?.id !== other.id) {
+            toast.error(
+              `Can't undo — “${me.name}” or “${other.name}” was moved since.`
+            );
+            return Promise.resolve();
+          }
+          return swapTotes(tote.id, other.id).catch((err) =>
+            toast.error(err.message)
+          );
+        },
       });
     } catch (err) {
       toast.error(err.message);
@@ -691,7 +840,7 @@ export default function DetailPage({
           <div className="flex gap-1">
             <button
               type="button"
-              onClick={() => setSheet("move")}
+              onClick={openMoveSheet}
               className="flex min-h-[44px] items-center gap-1 rounded-xl px-3 text-sm font-semibold text-blue-600 dark:text-blue-400"
             >
               <MoveRight className="h-4 w-4" aria-hidden="true" />
@@ -757,9 +906,7 @@ export default function DetailPage({
             )}
             <button
               type="button"
-              onClick={() => {
-                if (!blockedByDelete()) setTagEditorOpen(true);
-              }}
+              onClick={openTagEditor}
               className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full border border-dashed border-gray-300 px-3 text-sm font-semibold text-gray-600 dark:border-gray-600 dark:text-gray-300"
             >
               <Tag className="h-4 w-4" aria-hidden="true" />
@@ -790,29 +937,61 @@ export default function DetailPage({
                 autoFocus
                 className="apple-input w-full resize-none leading-normal"
               />
-              <div className="mt-2 flex items-center justify-between gap-2">
-                <span className="text-xs text-gray-500 dark:text-gray-400">
-                  {notesDraft.length}/{MAX_NOTES_LENGTH}
-                </span>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setNotesEditing(false)}
-                    disabled={savingNotes}
-                    className="min-h-[44px] rounded-xl border border-gray-300 px-4 font-semibold text-gray-700 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleSaveNotes}
-                    disabled={savingNotes}
-                    className="apple-button min-h-[44px] !py-0 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    {savingNotes ? "Saving…" : "Save"}
-                  </button>
+              {notesConflict !== null ? (
+                <div
+                  role="alert"
+                  className="mt-2 rounded-xl bg-amber-50 p-3 dark:bg-amber-950/40"
+                >
+                  <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+                    The other phone changed this note while you were editing:
+                  </p>
+                  <p className="mt-1 whitespace-pre-wrap break-words text-sm text-gray-700 dark:text-gray-300">
+                    {notesConflict || "(note removed)"}
+                  </p>
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={closeNotes}
+                      disabled={savingNotes}
+                      className="min-h-[44px] flex-1 rounded-xl border border-gray-300 px-3 font-semibold text-gray-700 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300"
+                    >
+                      Keep theirs
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSaveNotes({ force: true })}
+                      disabled={savingNotes}
+                      className="apple-button min-h-[44px] flex-1 !py-0 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {savingNotes ? "Saving…" : "Replace with mine"}
+                    </button>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                    {notesDraft.length}/{MAX_NOTES_LENGTH}
+                  </span>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={closeNotes}
+                      disabled={savingNotes}
+                      className="min-h-[44px] rounded-xl border border-gray-300 px-4 font-semibold text-gray-700 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSaveNotes()}
+                      disabled={savingNotes}
+                      className="apple-button min-h-[44px] !py-0 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {savingNotes ? "Saving…" : "Save"}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <button
@@ -1148,12 +1327,12 @@ export default function DetailPage({
       )}
 
       {/* Tag editor */}
-      {tagEditorOpen && canTag && (
+      {tagEditor && canTag && (
         <TagEditor
-          tags={toteTags}
+          tags={tagEditor.opened}
           suggestions={tagSuggestions}
           onSave={handleSaveTags}
-          onClose={() => setTagEditorOpen(false)}
+          onClose={() => setTagEditor(null)}
         />
       )}
 
