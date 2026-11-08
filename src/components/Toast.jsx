@@ -11,16 +11,29 @@ const ToastContext = createContext(null);
 
 let nextId = 1;
 
-// How many toasts to show at once. Only PLAIN toasts are ever dropped to
-// make room — a toast with an action (Undo) stays until its timer ends,
-// otherwise removing four items quickly would silently lose the first Undo.
+// How many toasts to show at once. Only PLAIN info toasts are ever dropped to
+// make room, oldest first. Never dropped:
+//   - a toast with an action (Undo) — otherwise removing four items quickly
+//     would silently lose the first Undo;
+//   - an error toast — "didn't save" is the one message that must be seen;
+//   - the toast being added right now — with three live Undos showing, the
+//     only plain toast would otherwise be the new one, and a save failure
+//     would be added and removed in the same state update, never rendered.
+// When nothing qualifies the stack is allowed to exceed the cap; every toast
+// still leaves on its own timer, so this is bounded by how fast they arrive.
 const MAX_VISIBLE = 3;
+
+function isProtected(toast) {
+  return Boolean(toast.actionLabel) || toast.tone === "error";
+}
 
 function trimToasts(toasts) {
   const next = [...toasts];
-  for (let i = 0; next.length > MAX_VISIBLE && i < next.length; ) {
-    if (next[i].actionLabel) {
-      i += 1; // keep: live Undo
+  // The toast being added is the last element; `i < next.length - 1` is
+  // re-evaluated after every splice so it is never reached.
+  for (let i = 0; next.length > MAX_VISIBLE && i < next.length - 1; ) {
+    if (isProtected(next[i])) {
+      i += 1; // keep: live Undo or error
     } else {
       next.splice(i, 1); // drop the oldest plain toast first
     }
