@@ -481,7 +481,16 @@ export default function DetailPage({
   };
 
   const handleDelete = async () => {
-    const snapshot = { name: tote.name, position: tote.position, items };
+    // The id lets Undo bring back the SAME row (restoreTote prefers it).
+    // Without it, Undo has to find the tombstone by name + spot in the hook's
+    // `deleted` list, which a slow pre-delete load landing afterwards can
+    // overwrite — then Undo would create a duplicate tote instead.
+    const snapshot = {
+      id: tote.id,
+      name: tote.name,
+      position: tote.position,
+      items,
+    };
     setSheet(null);
     // The snapshot already carries any staged +/- taps. Hold them while the
     // delete is in flight — no debounce, background/pagehide flush, or new

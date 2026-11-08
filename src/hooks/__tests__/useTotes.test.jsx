@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { toteService } from "../../services/toteService";
 import { ToteProvider, useTotes } from "../useTotes";
 
 // Local (localStorage) mode — the Supabase module is aliased to null in tests.
@@ -157,5 +158,58 @@ describe("useTotes: recently deleted", () => {
     await act(() => result.current.swapTotes(1, 2));
     expect(result.current.totesByPosition.B3.id).toBe(2);
     expect(result.current.totesByPosition.C4.id).toBe(1);
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("Undo with the snapshot's id restores the SAME tote even when a slow pre-delete load lands after the delete", async () => {
+    const { result } = await mount();
+    // A background refetch (phone waking up) that started BEFORE the delete…
+    const preDelete = await toteService.getTotes(); // the database as it was then
+    let release;
+    const slow = new Promise((r) => (release = r));
+    vi.spyOn(toteService, "getTotes").mockImplementationOnce(() => slow);
+    const pending = result.current.loadData({ background: true });
+
+    await act(() => result.current.deleteTote(1));
+    expect(result.current.totes).toEqual([]);
+    expect(result.current.deleted.map((d) => d.id)).toEqual([1]);
+
+    // …resolves after it. The sequence guard orders loads against loads,
+    // not against local mutations, so the pre-delete lists come back on
+    // screen until the next reload — `deleted` no longer knows the tombstone.
+    await act(async () => {
+      release(preDelete);
+      await pending;
+    });
+    expect(result.current.totes.map((t) => t.id)).toEqual([1]);
+    expect(result.current.deleted).toEqual([]);
+
+    // Undo must not depend on `deleted`: the id finds the tombstone itself
+    const snapshot = { id: 1, name: "Camping Gear", position: "B3", items: camping.items };
+    let restored;
+    await act(async () => {
+      restored = await result.current.restoreTote(snapshot);
+    });
+    expect(restored.id).toBe(1);
+    expect(restored.created_at).toBe(T0);
+    const stored = JSON.parse(localStorage.getItem(STORE));
+    expect(stored).toHaveLength(1); // the same row, no duplicate tote
+    expect(stored[0]).toMatchObject({ id: 1, position: "B3", created_at: T0 });
+    expect(result.current.totes.map((t) => t.id)).toEqual([1]);
+    expect(result.current.deleted).toEqual([]);
+  });
+
+  it.each([
+    ["updateItems", (r) => r.updateItems(1, (items) => items)],
+    ["updateTote", (r) => r.updateTote(1, { name: "Camp" })],
+    ["restoreRemovedItem", (r) => r.restoreRemovedItem("1:i1:x")],
+  ])("backstop: a reserved row handed back by %s is dropped from totes, never shown", async (method, call) => {
+    const { result } = await mount();
+    const tombstone = { ...camping, position: "__deleted__:B3:1" };
+    vi.spyOn(toteService, method).mockResolvedValueOnce(tombstone);
+    await act(() => call(result.current));
+    expect(result.current.totes).toEqual([]);
+    expect(result.current.totesByPosition).toEqual({});
   });
 });

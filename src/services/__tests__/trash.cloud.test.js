@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeSwapRpc, makeFakeSupabase } from "../../test/fake-supabase";
+import { addItem, adjustQty } from "../../utils/itemOps";
 
 // ---------------------------------------------------------------------------
 // Cloud mode for: capability detection, tags/notes, swap, soft delete /
@@ -285,6 +286,64 @@ describe("updateTote never revives a soft-deleted tote", () => {
     const { state } = await setup([camping, config]);
     await expect(toteService.updateTote(10, { position: "A1" })).rejects.toThrow(/find that tote/i);
     expect(state.rows.find((r) => r.id === 10).position).toBe("__config__");
+  });
+});
+
+describe("updateItems never writes a reserved row", () => {
+  const tomb = { ...camping, position: "__deleted__:B3:1", updated_at: daysAgo(1) };
+  const glue = { id: "i3", name: "Glue", qty: 1 };
+
+  it("a +/- tap, item add or item move into a soft-deleted tote reports 'couldn't find' and leaves the tombstone unchanged", async () => {
+    // Phone B deleted tote 1; phone A still has it open (or picked it as a
+    // move target) and its realtime link is down, so it never heard.
+    const { state } = await setup([tomb, sports]);
+    await expect(toteService.updateItems(1, adjustQty("i1", 1))).rejects.toThrow(/find that tote/i);
+    await expect(toteService.updateItems(1, addItem(glue))).rejects.toThrow(/find that tote/i);
+    expect(state.updates).toHaveLength(0); // refused on the read: nothing sent
+    expect(state.rows.find((r) => r.id === 1)).toEqual(tomb);
+
+    // A live tote still saves, and the write itself excludes reserved rows
+    const saved = await toteService.updateItems(2, addItem(glue));
+    expect(saved.items).toEqual([glue]);
+    expect(state.updates[0].filters).toEqual([
+      ["eq", "id", 2],
+      ["not_match", "position", "^__"],
+      ["eq", "updated_at", T0],
+    ]);
+  });
+
+  it("the other phone deletes between our read and our write: the write misses and the re-read refuses", async () => {
+    let raced = false;
+    const { state } = await setup([camping], {
+      beforeUpdate: (st) => {
+        if (raced) return;
+        raced = true;
+        const row = st.rows.find((r) => r.id === 1);
+        row.position = "__deleted__:B3:1";
+        row.updated_at = new Date(Date.now() + 500).toISOString();
+      },
+    });
+    await expect(toteService.updateItems(1, adjustQty("i1", 1))).rejects.toThrow(/find that tote/i);
+    expect(state.updates).toHaveLength(1);
+    const row = state.rows.find((r) => r.id === 1);
+    expect(row.position).toBe("__deleted__:B3:1");
+    expect(row.items).toEqual([lantern, rope]); // our tap never landed
+  });
+
+  it("the settings and bin rows can't be edited as totes; the bin's own writes are scoped to the bin row", async () => {
+    const config = { id: 10, name: "cfg", position: "__config__", items: { leftShelves: 3 }, updated_at: T0 };
+    const bin = { id: 50, name: "bin", position: "__removed_items__", items: [], created_at: T0, updated_at: T0 };
+    const { state } = await setup([camping, config, bin]);
+    await expect(toteService.updateItems(10, () => [])).rejects.toThrow(/find that tote/i);
+    await expect(toteService.updateItems(50, () => [])).rejects.toThrow(/find that tote/i);
+    expect(state.updates).toHaveLength(0);
+
+    await toteService.recordRemovedItems(camping, [lantern]);
+    expect(state.rows.find((r) => r.id === 50).items).toHaveLength(1);
+    const binWrite = state.updates.at(-1);
+    expect(binWrite.filters).toContainEqual(["eq", "id", 50]);
+    expect(binWrite.filters).toContainEqual(["eq", "position", "__removed_items__"]);
+    expect(binWrite.filters).not.toContainEqual(["not_match", "position", "^__"]);
   });
 });
 

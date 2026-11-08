@@ -419,6 +419,99 @@ async function isLiveTote(id) {
 }
 
 // ---------------------------------------------------------------------------
+// Item writes
+// ---------------------------------------------------------------------------
+
+/**
+ * Which rows an item write may land on. A TOTE write must never touch a
+ * reserved "__" row: since soft delete, a deleted tote survives as a
+ * tombstone, so a +/- tap, item add or item move from a page opened before
+ * the other phone deleted it would otherwise write into the tombstone
+ * silently (and hand a "__deleted__" row back to the app state). A BIN write
+ * may only touch the removed-items row. The check is both a read-side
+ * assertion and part of the write condition, so there is no window between.
+ */
+const ITEM_SCOPES = Object.freeze({
+  tote: {
+    accepts: (position) => !isReservedPosition(position),
+    restrict: (query) => query.not("position", "match", `^${RESERVED_PREFIX}`),
+  },
+  bin: {
+    accepts: (position) => position === REMOVED_ITEMS_POSITION,
+    restrict: (query) => query.eq("position", REMOVED_ITEMS_POSITION),
+  },
+});
+
+/**
+ * Apply a pure items operation (see utils/itemOps) to the FRESHEST stored
+ * copy of row `id` — never by writing a snapshot — within `scope`.
+ *
+ * Cloud mode is a compare-and-swap: read items + updated_at, apply the op,
+ * then UPDATE only if updated_at still matches what was read. If another
+ * device won the race no row comes back, so we re-read and re-apply (the
+ * ops are idempotent), giving up after a few attempts. A row outside the
+ * scope reads as "couldn't find" and is never written.
+ */
+function applyItemsOp(id, mutate, scope) {
+  return enqueueWrite(id, async () => {
+    // ---------- local mode ----------
+    if (!supabase) {
+      const totes = getLocalTotes();
+      const idx = totes.findIndex((t) => t.id === id);
+      if (idx < 0 || !scope.accepts(totes[idx].position)) {
+        throw new UserFacingError(NOT_FOUND_MESSAGE);
+      }
+      const current = Array.isArray(totes[idx].items) ? totes[idx].items : [];
+      totes[idx] = {
+        ...totes[idx],
+        items: normalizeItems(mutate(current)),
+        updated_at: new Date().toISOString(),
+      };
+      saveLocalTotes(totes);
+      return totes[idx];
+    }
+
+    // ---------- cloud mode (compare-and-swap) ----------
+    try {
+      for (let attempt = 0; attempt < CAS_ATTEMPTS; attempt++) {
+        const { data: row, error: readErr } = await supabase
+          .from("totes")
+          .select("items, updated_at, position")
+          .eq("id", id)
+          .maybeSingle();
+        if (readErr) throw readErr;
+        if (!row || !scope.accepts(row.position)) {
+          throw new UserFacingError(NOT_FOUND_MESSAGE);
+        }
+
+        const current = Array.isArray(row.items) ? row.items : [];
+        const patch = {
+          items: normalizeItems(mutate(current)),
+          updated_at: nextStamp(row.updated_at),
+        };
+
+        let query = scope.restrict(
+          supabase.from("totes").update(patch).eq("id", id)
+        );
+        // Only land if nobody else wrote since we read
+        query =
+          row.updated_at === null || row.updated_at === undefined
+            ? query.is("updated_at", null)
+            : query.eq("updated_at", row.updated_at);
+        const { data, error } = await query.select();
+        if (error) throw error;
+        if (Array.isArray(data) && data.length > 0) return data[0];
+        // Lost the race (or the row left the scope) — loop re-reads the
+        // other phone's copy and re-applies the same op on top of it.
+      }
+      throw new UserFacingError(BUSY_MESSAGE);
+    } catch (err) {
+      throw friendlyError(err, "save your changes");
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
 
@@ -624,6 +717,10 @@ export const toteService = {
    * device won the race no row comes back, so we re-read and re-apply (the
    * ops are idempotent), giving up after a few attempts.
    *
+   * Only ever writes a real tote: a reserved "__" row (soft-deleted
+   * tombstone, settings, bin) reads as "couldn't find", exactly as a hard-
+   * deleted row did, and the exclusion is part of the write condition.
+   *
    * @param {number|string} id
    * @param {(items: object[]) => object[]} mutate  pure, idempotent
    * @returns the saved row
@@ -633,59 +730,7 @@ export const toteService = {
     if (typeof mutate !== "function") {
       throw new TypeError("updateItems needs an operation function");
     }
-
-    return enqueueWrite(id, async () => {
-      // ---------- local mode ----------
-      if (!supabase) {
-        const totes = getLocalTotes();
-        const idx = totes.findIndex((t) => t.id === id);
-        if (idx < 0) throw new UserFacingError(NOT_FOUND_MESSAGE);
-        const current = Array.isArray(totes[idx].items) ? totes[idx].items : [];
-        totes[idx] = {
-          ...totes[idx],
-          items: normalizeItems(mutate(current)),
-          updated_at: new Date().toISOString(),
-        };
-        saveLocalTotes(totes);
-        return totes[idx];
-      }
-
-      // ---------- cloud mode (compare-and-swap) ----------
-      try {
-        for (let attempt = 0; attempt < CAS_ATTEMPTS; attempt++) {
-          const { data: row, error: readErr } = await supabase
-            .from("totes")
-            .select("items, updated_at")
-            .eq("id", id)
-            .maybeSingle();
-          if (readErr) throw readErr;
-          if (!row) throw new UserFacingError(NOT_FOUND_MESSAGE);
-
-          const current = Array.isArray(row.items) ? row.items : [];
-          const patch = {
-            items: normalizeItems(mutate(current)),
-            updated_at: nextStamp(row.updated_at),
-          };
-
-          let query = supabase.from("totes").update(patch).eq("id", id);
-          // Only land if nobody else wrote since we read
-          query =
-            row.updated_at === null || row.updated_at === undefined
-              ? query.is("updated_at", null)
-              : query.eq("updated_at", row.updated_at);
-          const { data, error } = await query.select();
-          if (error) throw error;
-          if (Array.isArray(data) && data.length > 0) return data[0];
-          // Lost the race — loop re-reads the other phone's copy and
-          // re-applies the same op on top of it.
-        }
-        throw new UserFacingError(
-          "Someone else is editing this tote right now. Please try again in a moment."
-        );
-      } catch (err) {
-        throw friendlyError(err, "save your changes");
-      }
-    });
+    return applyItemsOp(id, mutate, ITEM_SCOPES.tote);
   },
 
   /**
@@ -1048,7 +1093,12 @@ export const toteService = {
       const bin = await ensureRemovedItemsRow(entries);
       if (bin.created) return bin.row;
       try {
-        return await toteService.updateItems(bin.id, appendRemovedEntries(entries));
+        // Bin scope: this is the one item write allowed on a reserved row
+        return await applyItemsOp(
+          bin.id,
+          appendRemovedEntries(entries),
+          ITEM_SCOPES.bin
+        );
       } catch (err) {
         // The bin row vanished (purged by hand) — forget it and recreate once
         if (attempt === 0 && err?.message === NOT_FOUND_MESSAGE) {
@@ -1110,8 +1160,10 @@ export const toteService = {
       target = targetToteId;
     }
 
+    // The tote write is scoped to live totes (the isLiveTote check above
+    // could otherwise be raced by a delete); the bin write to the bin row.
     const saved = await toteService.updateItems(target, addItem(entry.item));
-    await toteService.updateItems(holder.id, removeItem(entryId));
+    await applyItemsOp(holder.id, removeItem(entryId), ITEM_SCOPES.bin);
     return saved;
   },
 
