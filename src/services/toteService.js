@@ -551,20 +551,62 @@ export const toteService = {
     return migrated;
   },
 
-  /** Subscribe to real-time changes on the totes table. */
-  subscribeToChanges(callback) {
+  /**
+   * Subscribe to real-time changes on the totes table.
+   *
+   * `onChange(payload)` fires for every row change; `onStatus(status, err)`
+   * mirrors the channel lifecycle ("SUBSCRIBED" | "CHANNEL_ERROR" |
+   * "TIMED_OUT" | "CLOSED") so the caller can show "Reconnecting…" and
+   * resubscribe after iOS suspends the websocket in the background.
+   * Returns the channel (pass it to unsubscribeFromChanges) or null when
+   * there is no cloud / the channel could not be created.
+   */
+  subscribeToChanges(onChange, onStatus) {
     if (!supabase) return null;
     try {
       return supabase
-        .channel("totes_changes")
+        .channel(nextChannelTopic())
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "totes" },
-          callback
+          onChange
         )
-        .subscribe();
+        .subscribe((status, err) => {
+          if (typeof onStatus !== "function") return;
+          try {
+            onStatus(status, err);
+          } catch {
+            // a status listener must never break the realtime client
+          }
+        });
     } catch {
       return null;
     }
   },
+
+  /** Leave a channel from subscribeToChanges and free its timers. */
+  unsubscribeFromChanges(channel) {
+    if (!channel) return;
+    try {
+      const result =
+        supabase && typeof supabase.removeChannel === "function"
+          ? supabase.removeChannel(channel)
+          : channel.unsubscribe();
+      if (result && typeof result.catch === "function") {
+        result.catch(() => {});
+      }
+    } catch {
+      // already closed — nothing to release
+    }
+  },
 };
+
+// Each subscription gets its own topic: supabase.channel(topic) hands back
+// an existing channel with the same name until its leave completes, so
+// re-using "totes_changes" during a resubscribe could re-join a channel
+// that is still shutting down.
+let channelSeq = 0;
+function nextChannelTopic() {
+  channelSeq += 1;
+  return `totes_changes_${channelSeq}`;
+}

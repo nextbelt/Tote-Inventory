@@ -7,10 +7,23 @@ import {
   useRef,
   useState,
 } from "react";
-import { migrateLocalToSupabase, toteService } from "../services/toteService";
+import {
+  migrateLocalToSupabase,
+  storageMode,
+  toteService,
+} from "../services/toteService";
 import { buildWalls, DEFAULT_LAYOUT, wallPositions } from "../utils/constants";
 
 const ToteContext = createContext(null);
+
+// Freshness / reconnect tuning. iOS suspends the websocket while the app is
+// in the background, so when the phone wakes we refetch if the data is older
+// than this or the realtime channel is not confirmed live.
+export const STALE_AFTER_MS = 30000;
+export const RECONNECT_BASE_MS = 1000;
+export const RECONNECT_MAX_MS = 30000;
+
+const DROPPED_STATUSES = new Set(["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"]);
 
 export function ToteProvider({ children }) {
   const [totes, setTotes] = useState([]);
@@ -18,40 +31,163 @@ export function ToteProvider({ children }) {
   const [refreshing, setRefreshing] = useState(false);
   const [source, setSource] = useState(null); // "cloud" | "cache" | "local"
   const [layout, setLayout] = useState(DEFAULT_LAYOUT);
-  const subscriptionRef = useRef(null);
+  // Epoch ms of the last successful CLOUD fetch (never set by cache/local)
+  const [lastSyncedAt, setLastSyncedAt] = useState(null);
+  // "live" (channel subscribed) | "connecting" (subscribing / retrying) |
+  // "offline" (browser reports no network, or there is no cloud at all)
+  const [connection, setConnection] = useState(
+    storageMode === "cloud" ? "connecting" : "offline"
+  );
+  const lastSyncedAtRef = useRef(null);
+  const requestSeqRef = useRef(0);
 
   const loadData = useCallback(async ({ background = false } = {}) => {
+    // Sequence guard: several loads can overlap (realtime event + wake-up
+    // refetch + pull-to-refresh). Only the newest request may apply its
+    // result, so a slow, older response can never overwrite newer data.
+    const seq = ++requestSeqRef.current;
+    const isCurrent = () => seq === requestSeqRef.current;
     if (!background) setRefreshing(true);
     try {
       const { data, source: src, layout: savedLayout } =
         await toteService.getTotes();
+      if (!isCurrent()) return;
       setTotes(Array.isArray(data) ? data : []);
       setSource(src);
       if (savedLayout) setLayout({ ...DEFAULT_LAYOUT, ...savedLayout });
+      if (src === "cloud") {
+        const now = Date.now();
+        lastSyncedAtRef.current = now;
+        setLastSyncedAt(now);
+      }
     } catch {
+      if (!isCurrent()) return;
       setTotes([]);
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      // A superseded request leaves the spinner to the request that replaced it
+      if (isCurrent()) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, []);
 
-  // Initialise: migrate any legacy local data, load, subscribe to realtime
+  // Initialise: migrate any legacy local data, load, subscribe to realtime.
+  // Keep the subscription alive: resubscribe with backoff after the channel
+  // drops, and catch up when the phone wakes or the network returns.
   useEffect(() => {
+    let disposed = false;
+    let channel = null;
+    let channelGen = 0; // bumps on every (re)subscribe; stale callbacks ignored
+    let subscribed = false;
+    let reconnectTimer = null;
+    let reconnectDelay = RECONNECT_BASE_MS;
+    const hasCloud = storageMode === "cloud";
+
     const init = async () => {
       await migrateLocalToSupabase();
       await loadData();
     };
     init();
 
-    subscriptionRef.current = toteService.subscribeToChanges(() => {
+    const clearReconnectTimer = () => {
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+    };
+
+    const teardownChannel = () => {
+      const old = channel;
+      channel = null;
+      channelGen += 1; // its CLOSED status (from our own leave) is now stale
+      if (old) toteService.unsubscribeFromChanges(old);
+    };
+
+    const scheduleReconnect = () => {
+      if (disposed || reconnectTimer) return;
+      const delay = reconnectDelay;
+      reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connect();
+      }, delay);
+    };
+
+    const connect = () => {
+      if (disposed || !hasCloud) return;
+      teardownChannel();
+      const gen = channelGen;
+      subscribed = false;
+      setConnection(navigator.onLine === false ? "offline" : "connecting");
+
+      channel = toteService.subscribeToChanges(
+        () => {
+          loadData({ background: true });
+        },
+        (status) => {
+          if (disposed || gen !== channelGen) return;
+          if (status === "SUBSCRIBED") {
+            subscribed = true;
+            reconnectDelay = RECONNECT_BASE_MS;
+            clearReconnectTimer();
+            setConnection("live");
+            // A re-subscribe means changes may have been missed while down
+            if (gen > 1) loadData({ background: true });
+          } else if (DROPPED_STATUSES.has(status)) {
+            subscribed = false;
+            setConnection(navigator.onLine === false ? "offline" : "connecting");
+            scheduleReconnect();
+          }
+        }
+      );
+      if (!channel) scheduleReconnect(); // client refused to create a channel
+    };
+
+    // Skip the backoff: the user is looking at the screen / network is back
+    const reconnectNow = () => {
+      if (!hasCloud || subscribed) return;
+      clearReconnectTimer();
+      reconnectDelay = RECONNECT_BASE_MS;
+      connect();
+    };
+
+    const isStale = () => {
+      const last = lastSyncedAtRef.current;
+      return !last || Date.now() - last > STALE_AFTER_MS;
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      const channelDown = hasCloud && !subscribed;
+      if (channelDown) reconnectNow();
+      if (channelDown || isStale()) loadData({ background: true });
+    };
+
+    const onOnline = () => {
+      if (hasCloud) {
+        if (subscribed) setConnection("live");
+        else reconnectNow();
+      }
       loadData({ background: true });
-    });
+    };
+
+    const onOffline = () => {
+      setConnection("offline");
+    };
+
+    connect();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
 
     return () => {
-      if (subscriptionRef.current) {
-        subscriptionRef.current.unsubscribe();
-      }
+      disposed = true;
+      clearReconnectTimer();
+      teardownChannel();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
     };
   }, [loadData]);
 
@@ -151,6 +287,9 @@ export function ToteProvider({ children }) {
       moveTote,
       restoreTote,
       saveLayout,
+      // Freshness: when the cloud copy was last fetched, and the realtime link
+      lastSyncedAt,
+      connection,
     }),
     [
       totes,
@@ -169,6 +308,8 @@ export function ToteProvider({ children }) {
       moveTote,
       restoreTote,
       saveLayout,
+      lastSyncedAt,
+      connection,
     ]
   );
 

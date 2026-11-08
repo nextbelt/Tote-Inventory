@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatDateTime,
   formatRelative,
+  formatTimeOfDay,
   latestModified,
   toteModifiedDate,
 } from "../time";
@@ -106,5 +107,27 @@ describe("formatDateTime", () => {
   it("returns empty for missing/invalid input instead of 'Invalid Date'", () => {
     expect(formatDateTime("garbage")).toBe("");
     expect(formatDateTime(null)).toBe("");
+  });
+});
+
+describe("formatTimeOfDay", () => {
+  it("shows only the clock time for a moment earlier today", () => {
+    const now = new Date(2026, 10, 8, 14, 30).getTime(); // local 2:30 PM
+    const label = formatTimeOfDay(new Date(2026, 10, 8, 14, 10), now);
+    expect(label).toMatch(/\d{1,2}:\d{2}/);
+    expect(label).not.toMatch(/2026/);
+  });
+
+  it("includes the date for a copy from another day", () => {
+    const now = new Date(2026, 10, 8, 9, 0).getTime();
+    const label = formatTimeOfDay(new Date(2026, 10, 7, 23, 50), now);
+    expect(label).toMatch(/2026/);
+    expect(label).toMatch(/\d{1,2}:\d{2}/);
+  });
+
+  it("returns empty for missing/invalid input", () => {
+    expect(formatTimeOfDay("garbage")).toBe("");
+    expect(formatTimeOfDay(null)).toBe("");
+    expect(formatTimeOfDay(undefined)).toBe("");
   });
 });
