@@ -1,5 +1,5 @@
 import { Package, Plus } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useRef, useState } from "react";
 import Sheet from "./Sheet";
 import { useToast } from "./Toast";
 import { useTotes } from "../hooks/useTotes";
@@ -11,6 +11,11 @@ import { adjustQty } from "../utils/itemOps";
 export default function RestockSheet({ onClose, onSelectTote }) {
   const { totesByPosition, updateItems } = useTotes();
   const toast = useToast();
+  // adjustQty is relative, so a second tap while a save is in flight would add
+  // another +1. The ref blocks it synchronously; the state only drives the UI.
+  const pendingRef = useRef(new Set());
+  const [pending, setPending] = useState(() => new Set());
+  const keyOf = (tote, item) => JSON.stringify([tote.id, item.id]);
 
   const groups = useMemo(() => {
     const list = [];
@@ -23,6 +28,10 @@ export default function RestockSheet({ onClose, onSelectTote }) {
   }, [totesByPosition]);
 
   const gotOne = async (tote, item) => {
+    const key = keyOf(tote, item);
+    if (pendingRef.current.has(key)) return;
+    pendingRef.current.add(key);
+    setPending(new Set(pendingRef.current));
     try {
       await updateItems(tote.id, adjustQty(item.id, 1));
       toast.show(`Restocked “${item.name}”`, {
@@ -34,6 +43,9 @@ export default function RestockSheet({ onClose, onSelectTote }) {
       });
     } catch (err) {
       toast.error(err.message);
+    } finally {
+      pendingRef.current.delete(key);
+      setPending(new Set(pendingRef.current));
     }
   };
 
@@ -88,8 +100,10 @@ export default function RestockSheet({ onClose, onSelectTote }) {
                       <button
                         type="button"
                         onClick={() => gotOne(tote, item)}
+                        disabled={pending.has(keyOf(tote, item))}
+                        aria-busy={pending.has(keyOf(tote, item))}
                         aria-label={`Got one: ${item.name}`}
-                        className="mr-2 flex min-h-[48px] shrink-0 items-center gap-1 rounded-xl bg-blue-50 px-3 text-sm font-semibold text-blue-600 dark:bg-blue-950 dark:text-blue-400"
+                        className="mr-2 flex min-h-[48px] shrink-0 items-center gap-1 rounded-xl bg-blue-50 px-3 text-sm font-semibold text-blue-600 disabled:opacity-50 dark:bg-blue-950 dark:text-blue-400"
                       >
                         <Plus className="h-4 w-4" aria-hidden="true" />
                         Got one

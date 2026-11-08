@@ -1,4 +1,4 @@
-import { Clock, CloudOff, HardDrive, Package, RefreshCw, Wrench } from "lucide-react";
+import { Clock, CloudOff, HardDrive, Package, PackageX, RefreshCw, Wrench } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import WallPanel, { MiniMap } from "../components/GarageWalls";
 import RestockSheet from "../components/RestockSheet";
@@ -151,13 +151,17 @@ export default function GridPage({
       >
         <div className="mx-auto max-w-3xl px-4 py-3">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <h1 className="apple-title flex items-center gap-2 text-xl sm:text-2xl">
-              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-r from-blue-500 to-indigo-500">
+            <h1 className="apple-title flex min-w-0 items-center gap-2 whitespace-nowrap text-xl sm:text-2xl">
+              <span
+                className={`h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-r from-blue-500 to-indigo-500 ${
+                  restockCount > 0 ? "hidden min-[400px]:flex" : "flex"
+                }`}
+              >
                 <Package className="h-5 w-5 text-white" aria-hidden="true" />
               </span>
-              Garage Totes
+              <span className="truncate">Garage Totes</span>
             </h1>
-            <div className="flex items-center gap-1">
+            <div className="flex shrink-0 items-center gap-1">
               <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-300">
                 {occupied}/{totalPositions} spots
               </span>
@@ -165,10 +169,12 @@ export default function GridPage({
                 <button
                   type="button"
                   onClick={() => setRestockOpen(true)}
-                  className="flex min-h-[44px] shrink-0 items-center rounded-xl px-1.5 text-xs font-semibold text-amber-700 dark:text-amber-300"
+                  aria-label={`Restock, ${restockCount} ${restockCount === 1 ? "item" : "items"}`}
+                  className="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center gap-1 rounded-xl px-1 text-xs font-semibold text-amber-700 dark:text-amber-300"
                 >
-                  Restock
-                  <span className="ml-1 rounded-full bg-amber-100 px-1.5 py-0.5 dark:bg-amber-950">
+                  <PackageX className="h-4 w-4" aria-hidden="true" />
+                  <span className="hidden sm:inline">Restock</span>
+                  <span className="rounded-full bg-amber-100 px-1.5 py-0.5 dark:bg-amber-950">
                     {restockCount}
                   </span>
                 </button>

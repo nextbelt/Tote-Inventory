@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import RestockSheet from "../RestockSheet";
@@ -107,6 +107,42 @@ describe("RestockSheet", () => {
       expect.stringContaining("Blue paint"),
       expect.objectContaining({ actionLabel: "Undo" })
     );
+  });
+
+  it("ignores repeat taps while a save is in flight (no double +1)", async () => {
+    let resolve;
+    mockUpdateItems.mockReturnValue(new Promise((r) => (resolve = r)));
+    render(<RestockSheet onClose={vi.fn()} onSelectTote={vi.fn()} />);
+
+    const button = screen.getByRole("button", { name: "Got one: Blue paint" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    fireEvent.click(button);
+
+    expect(mockUpdateItems).toHaveBeenCalledTimes(1);
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("aria-busy", "true");
+    // other rows stay usable
+    expect(screen.getByRole("button", { name: "Got one: Twine" })).toBeEnabled();
+
+    await act(async () => resolve({}));
+    expect(mockShow).toHaveBeenCalledTimes(1);
+    expect(button).toBeEnabled();
+  });
+
+  it("re-enables the button after a failed save so the user can retry", async () => {
+    mockUpdateItems.mockRejectedValueOnce(new Error("Offline"));
+    const user = userEvent.setup();
+    render(<RestockSheet onClose={vi.fn()} onSelectTote={vi.fn()} />);
+
+    const button = screen.getByRole("button", { name: "Got one: Twine" });
+    await user.click(button);
+    expect(mockError).toHaveBeenCalledWith("Offline");
+    expect(button).toBeEnabled();
+
+    await user.click(button);
+    expect(mockUpdateItems).toHaveBeenCalledTimes(2);
+    expect(mockShow).toHaveBeenCalledTimes(1);
   });
 
   it("reports a failed save instead of a success toast", async () => {
