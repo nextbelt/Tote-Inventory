@@ -1,5 +1,4 @@
-// Backup & export logic (pure, no UI). A later batch adds the sheet that
-// calls these. Nothing here talks to the database: restoring is planned as
+// Backup & export logic (pure, no UI; BackupSheet calls these). Nothing here talks to the database: restoring is planned as
 // "what is missing" so it can only ever ADD data, never delete or overwrite.
 
 import { itemQty } from "./itemOps";
@@ -95,20 +94,34 @@ function locationText(describe, position) {
   return d ?? position ?? "";
 }
 
+/** Tags of a tote as one cell: "camping; winter" (empty when none). */
+function tagsCell(tags) {
+  if (!Array.isArray(tags)) return "";
+  return tags
+    .filter((t) => typeof t === "string" && t.trim() !== "")
+    .join("; ");
+}
+
 /**
- * CSV with header Tote,Location,Item,Quantity,Photo. One row per item, or a
- * single row (blank item) for an empty tote. UTF-8 BOM first so Excel and
- * Numbers read accents correctly; CRLF line endings.
+ * CSV with header Tote,Location,Item,Quantity,Photo,Tags,Note. One row per
+ * item, or a single row (blank item) for an empty tote. Tags are the tote's
+ * (repeated on each of its rows so a spreadsheet filter works), joined with
+ * "; "; Note is the item's own note. Both columns are always present (blank
+ * when unused) so the layout never changes between exports. UTF-8 BOM first
+ * so Excel and Numbers read accents correctly; CRLF line endings.
  */
 export function buildCsv(totes, describe) {
-  const lines = [["Tote", "Location", "Item", "Quantity", "Photo"]];
+  const lines = [
+    ["Tote", "Location", "Item", "Quantity", "Photo", "Tags", "Note"],
+  ];
   (Array.isArray(totes) ? totes : [])
     .filter((t) => t && !isReserved(t))
     .forEach((t) => {
       const location = locationText(describe, t.position);
+      const tags = tagsCell(t.tags);
       const items = Array.isArray(t.items) ? t.items : [];
       if (items.length === 0) {
-        lines.push([t.name, location, "", "", ""]);
+        lines.push([t.name, location, "", "", "", tags, ""]);
         return;
       }
       items.forEach((it) => {
@@ -118,11 +131,15 @@ export function buildCsv(totes, describe) {
           it?.name,
           itemQty(it),
           photoCell(it?.image),
+          tags,
+          typeof it?.note === "string" ? it.note : "",
         ]);
       });
     });
   return (
-    BOM + lines.map((row) => row.map(csvField).join(",")).join("\r\n") + "\r\n"
+    BOM +
+    lines.map((row) => row.map(csvField).join(",")).join("\r\n") +
+    "\r\n"
   );
 }
 

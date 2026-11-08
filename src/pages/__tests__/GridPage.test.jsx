@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import GridPage from "../GridPage";
 
-const state = vi.hoisted(() => ({ totes: [] }));
+const state = vi.hoisted(() => ({ totes: [], header: {} }));
 
 vi.mock("../../hooks/useTotes", () => ({
   useTotes: () => ({
@@ -13,6 +13,11 @@ vi.mock("../../hooks/useTotes", () => ({
     refreshing: false,
     source: "supabase",
     walls: [],
+    deleted: [],
+    listRemovedItems: async () => [],
+    lastSyncedAt: null,
+    connection: "live",
+    ...state.header,
     totalPositions: 35,
     loadData: vi.fn(),
     updateItems: vi.fn(),
@@ -105,6 +110,52 @@ describe("GridPage restock button", () => {
     renderGrid();
     expect(screen.getByRole("button", { name: "Restock, 1 item" })).toBeInTheDocument();
     expect(screen.queryByText(/Last updated/)).not.toBeInTheDocument();
+  });
+});
+
+describe("GridPage header: More button and sync status", () => {
+  beforeEach(() => {
+    state.totes = [];
+    state.header = {};
+  });
+
+  it("has a 44 px More button that opens the menu", async () => {
+    const user = userEvent.setup();
+    renderGrid();
+    const more = screen.getByRole("button", { name: "More" });
+    expect(more).toHaveClass("h-11", "w-11");
+    // Next to the refresh button on the title row, i.e. before the search box
+    const search = screen.getByLabelText("Search totes and items");
+    expect(more.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(more.parentElement).toContainElement(screen.getByRole("button", { name: "Refresh" }));
+
+    await user.click(more);
+    const menu = screen.getByRole("dialog", { name: "More" });
+    expect(within(menu).getByRole("button", { name: /Backup & export/ })).toBeInTheDocument();
+    expect(within(menu).getByRole("button", { name: /Print labels/ })).toBeInTheDocument();
+    expect(within(menu).getByRole("button", { name: /Recently deleted/ })).toBeInTheDocument();
+  });
+
+  it("shows the sync status on the status line with Last updated", () => {
+    state.totes = [tote([{ id: 1, name: "Tape" }])];
+    state.header = { source: "cloud", lastSyncedAt: Date.now(), connection: "live" };
+    renderGrid();
+    const sync = screen.getByTestId("sync-status");
+    expect(sync).toHaveTextContent("Synced just now");
+    expect(sync.parentElement.parentElement).toHaveTextContent(/Last updated/);
+  });
+
+  it("shows no sync line in local mode", () => {
+    state.totes = [tote([{ id: 1, name: "Tape" }])];
+    state.header = { source: "local", connection: "offline" };
+    renderGrid();
+    expect(screen.queryByTestId("sync-status")).not.toBeInTheDocument();
+  });
+
+  it("says when it is showing an offline copy", () => {
+    state.header = { source: "cache", lastSyncedAt: null, connection: "offline" };
+    renderGrid();
+    expect(screen.getByTestId("sync-status")).toHaveTextContent(/Offline/);
   });
 });
 

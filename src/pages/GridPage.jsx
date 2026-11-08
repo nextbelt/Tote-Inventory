@@ -1,10 +1,21 @@
-import { Clock, CloudOff, HardDrive, Package, PackageX, RefreshCw, Wrench } from "lucide-react";
+import {
+  Clock,
+  CloudOff,
+  HardDrive,
+  MoreHorizontal,
+  Package,
+  PackageX,
+  RefreshCw,
+  Wrench,
+} from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import WallPanel, { MiniMap } from "../components/GarageWalls";
+import MoreMenu from "../components/MoreMenu";
 import RestockSheet from "../components/RestockSheet";
 import SearchBar from "../components/SearchBar";
 import SearchResults from "../components/SearchResults";
 import ShelfEditor from "../components/ShelfEditor";
+import SyncStatus from "../components/SyncStatus";
 import ThemeToggle from "../components/ThemeToggle";
 import TidyUpBanner from "../components/TidyUpBanner";
 import ToteList from "../components/ToteList";
@@ -38,9 +49,12 @@ export default function GridPage({
     walls,
     totalPositions,
     loadData,
+    lastSyncedAt,
+    connection,
   } = useTotes();
   const [editWall, setEditWall] = useState(null); // "left" | "right" | null
   const [restockOpen, setRestockOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const carouselRef = useRef(null);
   const scrollDebounceRef = useRef(null);
 
@@ -135,6 +149,8 @@ export default function GridPage({
   const occupied = Object.keys(totesByPosition).length;
   const restockCount = useMemo(() => restockItems(visibleTotes).length, [visibleTotes]);
   const lastUpdated = latestModified(totes);
+  // SyncStatus says nothing in local mode, so no status line for it alone
+  const showSync = Boolean(source) && source !== "local";
 
   return (
     <div className="min-h-[100dvh] pb-8" style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 2rem)" }}>
@@ -149,15 +165,18 @@ export default function GridPage({
       >
         <div className="mx-auto max-w-3xl px-4 py-3">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <h1 className="apple-title flex min-w-0 items-center gap-2 whitespace-nowrap text-xl sm:text-2xl">
+            <h1 className="apple-title flex min-w-0 items-center gap-2 whitespace-nowrap text-lg sm:text-2xl">
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-r from-blue-500 to-indigo-500">
                 <Package className="h-5 w-5 text-white" aria-hidden="true" />
               </span>
               <span className="truncate">Garage Totes</span>
             </h1>
             <div className="flex shrink-0 items-center gap-1">
+              {/* "spots" is dropped on narrow phones to make room for the
+                  More button (still read by screen readers) */}
               <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-300">
-                {occupied}/{totalPositions} spots
+                {occupied}/{totalPositions}
+                <span className="sr-only sm:not-sr-only"> spots</span>
               </span>
               <ThemeToggle />
               <button
@@ -172,23 +191,42 @@ export default function GridPage({
                   aria-hidden="true"
                 />
               </button>
+              <button
+                type="button"
+                onClick={() => setMoreOpen(true)}
+                aria-label="More"
+                aria-haspopup="dialog"
+                className="flex h-11 w-11 items-center justify-center rounded-xl text-gray-500 dark:text-gray-300"
+              >
+                <MoreHorizontal className="h-5 w-5" aria-hidden="true" />
+              </button>
             </div>
           </div>
           <SearchBar value={searchTerm} onChange={onSearchChange} />
           {/* Status line. The Restock button lives here, not on the title
               row: with the spots badge, theme and refresh buttons there is
               no room for a readable "Restock N" label at 375–430 px. */}
-          {(lastUpdated || restockCount > 0) && (
+          {(lastUpdated || restockCount > 0 || showSync) && (
             <div className="mt-1.5 flex min-h-[24px] items-center justify-between gap-2">
-              {lastUpdated ? (
-                <p className="flex min-w-0 items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
-                  <Clock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                  <span>Last updated</span>
-                  <RelativeTime date={lastUpdated} />
-                </p>
-              ) : (
-                <span />
-              )}
+              {/* Wraps instead of squeezing: "Last updated" and the sync
+                  status are both short, but together with Restock they can
+                  outgrow a 375 px line. */}
+              <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5">
+                {lastUpdated && (
+                  <p className="flex min-w-0 items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+                    <Clock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    <span>Last updated</span>
+                    <RelativeTime date={lastUpdated} />
+                  </p>
+                )}
+                {showSync && (
+                  <SyncStatus
+                    source={source}
+                    lastSyncedAt={lastSyncedAt}
+                    connection={connection}
+                  />
+                )}
+              </div>
               {/* 44 px tap target drawn as a slim pill: the negative margin
                   keeps the sticky header from growing when something is out */}
               {restockCount > 0 && (
@@ -346,6 +384,8 @@ export default function GridPage({
           </>
         )}
       </main>
+
+      {moreOpen && <MoreMenu onClose={() => setMoreOpen(false)} />}
 
       {restockOpen && (
         <RestockSheet

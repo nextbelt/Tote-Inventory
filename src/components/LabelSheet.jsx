@@ -42,7 +42,7 @@ const PRINT_CSS = `
 `;
 
 /**
-& an on-screen preview in a bottom sheet and a
+ * Labels for printing: an on-screen preview in a bottom sheet and a
  * print-only copy portaled to <body>, so @media print can hide the whole app
  * (the sheet's scroll container would otherwise clip multi-page output).
  * Optional `positions`: the full list of grid slots, so shelf-edge labels also

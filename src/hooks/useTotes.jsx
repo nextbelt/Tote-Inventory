@@ -15,6 +15,7 @@ import {
   UserFacingError,
 } from "../services/toteService";
 import { buildWalls, DEFAULT_LAYOUT, wallPositions } from "../utils/constants";
+import { prefetchPhotos } from "../utils/photoPrefetch";
 import { reconcileQtyOp } from "../utils/qtyOps";
 import { isReservedPosition } from "../utils/reservedRows";
 
@@ -506,6 +507,37 @@ export function ToteProvider({ children }) {
     });
     return map;
   }, [totes]);
+
+  // Warm the offline photo cache after a successful CLOUD load: ask the
+  // service worker for the photos of the totes on the walls, so they are
+  // there when the phone loses signal in the garage. Only URLs not yet
+  // handed over are sent (a realtime reload with the same photos sends
+  // nothing); a URL the worker could not be asked about (no controller yet)
+  // stays unsent so a later load retries it. Never runs in local mode.
+  const prefetchedRef = useRef(new Set());
+  useEffect(() => {
+    if (storageMode !== "cloud" || source !== "cloud") return;
+    const fresh = new Set();
+    Object.values(totesByPosition).forEach((tote) => {
+      if (isReservedPosition(tote.position)) return;
+      (Array.isArray(tote.items) ? tote.items : []).forEach((item) => {
+        const url = item?.image;
+        if (
+          typeof url === "string" &&
+          /^https?:\/\//i.test(url) &&
+          !prefetchedRef.current.has(url)
+        ) {
+          fresh.add(url);
+        }
+      });
+    });
+    if (fresh.size === 0) return;
+    if (prefetchPhotos([...fresh]) > 0) {
+      fresh.forEach((url) => prefetchedRef.current.add(url));
+    }
+    // lastSyncedAt: every successful cloud load re-checks, so URLs the worker
+    // could not take earlier are retried even when the photos did not change
+  }, [source, totesByPosition, lastSyncedAt]);
 
   // Walls derive from the saved layout; occupied slots always stay visible
   const walls = useMemo(
