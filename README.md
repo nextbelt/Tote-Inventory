@@ -19,6 +19,10 @@ Safari via **Share → Add to Home Screen**.
   optional camera photo (compressed on-device before upload), and Enter.
 - **Quantities** — +/− steppers on every item ("used one" / "restocked"),
   with an out-of-stock state. Saves are debounced and optimistic.
+- **Safe on two phones** — item edits are saved as small operations
+  (add / remove / ±qty) applied to the freshest copy in the database, not as
+  whole-list snapshots, so two people editing the same tote at once both
+  keep their changes. Renames and moves touch only the field that changed.
 - **Move & delete with Undo** — move a tote by tapping its new slot on a
   visual picker; destructive actions get a snackbar Undo.
 - **Offline-aware** — cloud data is mirrored locally for offline browsing;

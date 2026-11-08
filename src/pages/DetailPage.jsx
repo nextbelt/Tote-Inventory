@@ -10,7 +10,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Sheet from "../components/Sheet";
 import { useToast } from "../components/Toast";
 import { useTotes } from "../hooks/useTotes";
@@ -19,6 +19,14 @@ import { compressImage } from "../utils/images";
 import RelativeTime from "../components/RelativeTime";
 import { formatDateTime, toteModifiedDate } from "../utils/time";
 import { toteService } from "../services/toteService";
+import {
+  addItem,
+  adjustQty,
+  composeOps,
+  itemQty,
+  removeItem as removeItemOp,
+  restoreItem,
+} from "../utils/itemOps";
 import { validateImageFile, validateItemName } from "../utils/validation";
 
 const newId = () =>
@@ -26,10 +34,12 @@ const newId = () =>
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-const itemQty = (item) => {
-  const q = Number(item?.qty);
-  return Number.isFinite(q) && q >= 0 ? q : 1;
-};
+const EMPTY_ITEMS = [];
+const QTY_FLUSH_MS = 700;
+
+/** Coalesced +/- taps (Map itemId → delta) as one item operation. */
+const deltasToOp = (deltas) =>
+  composeOps(...[...deltas].map(([id, delta]) => adjustQty(id, delta)));
 
 /** All slots on a wall in natural reading order (A1, A2 … B1, B2 …). */
 function wallSlots(wall) {
@@ -49,7 +59,7 @@ export default function DetailPage({
     totes,
     totesByPosition,
     walls,
-    updateTote,
+    updateItems,
     deleteTote,
     moveTote,
     restoreTote,
@@ -58,11 +68,28 @@ export default function DetailPage({
 
   // Always read the latest version from the store
   const tote = totes.find((t) => t.id === initialTote.id) || initialTote;
-  const storeItems = Array.isArray(tote.items) ? tote.items : [];
+  const storeItems = Array.isArray(tote.items) ? tote.items : EMPTY_ITEMS;
 
-  // Optimistic item edits: pendingItems shows instantly, then persists
-  const [pendingItems, setPendingItems] = useState(null);
-  const items = pendingItems ?? storeItems;
+  // Optimistic edits are OPERATIONS layered on the live store, never a
+  // snapshot. So a realtime refresh from the other phone can't wipe what is
+  // staged here, and what is staged here lands on top of their changes.
+  //   staged   – +/- taps coalesced per item id, saved after a short pause
+  //   inflight – ops being saved right now (add / remove / undo / flushed +/-)
+  const [staged, setStaged] = useState(() => new Map());
+  const [inflight, setInflight] = useState([]);
+  const stagedRef = useRef(staged);
+  const saveTimerRef = useRef(null);
+  const toteRef = useRef(tote);
+  toteRef.current = tote;
+
+  const items = useMemo(
+    () =>
+      composeOps(
+        ...inflight.map((op) => op.apply),
+        deltasToOp(staged)
+      )(storeItems),
+    [storeItems, inflight, staged]
+  );
 
   const [newItemName, setNewItemName] = useState("");
   const [newItemImage, setNewItemImage] = useState(null);
@@ -71,60 +98,56 @@ export default function DetailPage({
   const [sheet, setSheet] = useState(null); // "move" | "delete" | null
   const [lightbox, setLightbox] = useState(null);
 
-  const saveTimerRef = useRef(null);
-  const latestRef = useRef({ tote, items: null });
-  latestRef.current.tote = tote;
+  const replaceStaged = useCallback((next) => {
+    stagedRef.current = next;
+    setStaged(next);
+  }, []);
 
-  const persistItems = useCallback(
-    async (nextItems) => {
-      clearTimeout(saveTimerRef.current);
-      latestRef.current.items = null;
+  /** Save one item operation; it stays visible while in flight. */
+  const runOp = useCallback(
+    async (apply) => {
+      const key = newId();
+      setInflight((prev) => [...prev, { key, apply }]);
       try {
-        // Items-only patch: can never clobber a concurrent move or rename
-        await updateTote(latestRef.current.tote.id, { items: nextItems });
-        // Keep the overlay if a newer edit was staged while we were saving
-        if (!latestRef.current.items) setPendingItems(null);
+        await updateItems(toteRef.current.id, apply);
       } catch (err) {
-        if (!latestRef.current.items) setPendingItems(null);
         toast.error(err.message);
+      } finally {
+        // The store already holds the saved row by now, so dropping the
+        // overlay is seamless (both updates land in the same React batch).
+        setInflight((prev) => prev.filter((op) => op.key !== key));
       }
     },
-    [updateTote, toast]
+    [updateItems, toast]
   );
 
-  /** Show instantly, save soon (coalesces rapid +/- taps). */
-  const stageItems = useCallback(
-    (nextItems, { immediate = false } = {}) => {
-      setPendingItems(nextItems);
-      latestRef.current.items = nextItems;
-      clearTimeout(saveTimerRef.current);
-      if (immediate) {
-        return persistItems(nextItems);
-      } else {
-        saveTimerRef.current = setTimeout(
-          () => persistItems(latestRef.current.items ?? nextItems),
-          700
-        );
-      }
-    },
-    [persistItems]
-  );
+  /** Persist the coalesced +/- taps now (no-op when nothing is staged). */
+  const flushStaged = useCallback(() => {
+    clearTimeout(saveTimerRef.current);
+    const deltas = stagedRef.current;
+    if (deltas.size === 0) return Promise.resolve();
+    replaceStaged(new Map());
+    return runOp(deltasToOp(deltas));
+  }, [replaceStaged, runOp]);
 
-  // Flush any pending quantity edits when leaving the page
+  // Flush any staged quantity edits when leaving the page — through the
+  // same op path (and the shared store, so the grid and a re-opened detail
+  // page already show the saved quantity).
   useEffect(
     () => () => {
       clearTimeout(saveTimerRef.current);
-      const { tote: t, items: staged } = latestRef.current;
-      if (staged) {
-        toteService.updateTote(t.id, { items: staged }).catch(() => {
-          // ToastProvider outlives this page, so the user still hears about it
-          toast.error(
-            `Your last change to “${t.name}” didn't save. Please check it.`
-          );
-        });
-      }
+      const deltas = stagedRef.current;
+      if (deltas.size === 0) return;
+      stagedRef.current = new Map();
+      const t = toteRef.current;
+      updateItems(t.id, deltasToOp(deltas)).catch(() => {
+        // ToastProvider outlives this page, so the user still hears about it
+        toast.error(
+          `Your last change to “${t.name}” didn't save. Please check it.`
+        );
+      });
     },
-    [toast]
+    [toast, updateItems]
   );
 
   // ------ quick add ------
@@ -156,33 +179,39 @@ export default function DetailPage({
     const check = validateItemName(newItemName);
     if (!check.valid) return;
     setAdding(true);
-    const next = [
-      ...items,
-      { id: newId(), name: newItemName.trim(), image: newItemImage, qty: 1 },
-    ];
+    const item = {
+      id: newId(),
+      name: newItemName.trim(),
+      image: newItemImage,
+      qty: 1,
+    };
     setNewItemName("");
     setNewItemImage(null);
-    await stageItems(next, { immediate: true });
+    await runOp(addItem(item));
     setAdding(false);
   };
 
   // ------ quantity / remove ------
+  /** Show instantly; the net delta per item is saved after a short pause. */
   const changeQty = (item, delta) => {
-    const next = items.map((it) =>
-      it.id === item.id ? { ...it, qty: Math.max(0, itemQty(it) + delta) } : it
-    );
-    stageItems(next);
+    const next = new Map(stagedRef.current);
+    const total = (next.get(item.id) || 0) + delta;
+    if (total === 0) next.delete(item.id);
+    else next.set(item.id, total);
+    replaceStaged(next);
+    clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(flushStaged, QTY_FLUSH_MS);
   };
 
   const removeItem = (item) => {
-    const snapshot = items;
-    stageItems(
-      items.filter((it) => it.id !== item.id),
-      { immediate: true }
-    );
+    const index = items.findIndex((it) => it.id === item.id);
+    // Land any staged +/- first so Undo brings back the quantity you saw
+    flushStaged();
+    runOp(removeItemOp(item.id));
     toast.show(`Removed “${item.name}”`, {
       actionLabel: "Undo",
-      onAction: () => stageItems(snapshot, { immediate: true }),
+      // Restore-by-id: safe even if the other phone changed the list since
+      onAction: () => runOp(restoreItem(item, index)),
     });
   };
 
@@ -209,6 +238,10 @@ export default function DetailPage({
     setSheet(null);
     try {
       await deleteTote(tote.id);
+      // The snapshot already carries any staged +/- taps; don't let the
+      // unmount flush try to save them to a tote that no longer exists.
+      clearTimeout(saveTimerRef.current);
+      replaceStaged(new Map());
       onDeleted();
       toast.show(`Deleted “${snapshot.name}”`, {
         actionLabel: "Undo",

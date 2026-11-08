@@ -1,0 +1,79 @@
+// Item edits as OPERATIONS, not snapshots.
+//
+// Two phones edit the same tote at the same time. If each one saved its
+// whole `items` array, whichever saved last would silently erase the
+// other's change. Instead every edit is a small pure function
+// `items → items` that the service applies to the freshest stored copy
+// (and the detail page applies on top of the live store for an instant,
+// optimistic view). Every op is idempotent and keyed by item id, so the
+// same op can safely be re-applied after a lost compare-and-swap race.
+
+/** Quantity of an item, defaulting to 1 for legacy rows without `qty`. */
+export const itemQty = (item) => {
+  const q = Number(item?.qty);
+  return Number.isFinite(q) && q >= 0 ? q : 1;
+};
+
+const asArray = (items) => (Array.isArray(items) ? items : []);
+
+/** Append `item` unless an item with the same id already exists. */
+export const addItem = (item) => (items) => {
+  const list = asArray(items);
+  return list.some((it) => it.id === item.id) ? list : [...list, item];
+};
+
+/** Remove the item with this id (no-op when it is already gone). */
+export const removeItem = (id) => (items) =>
+  asArray(items).filter((it) => it.id !== id);
+
+/** Change an item's quantity by `delta`, never below zero. */
+export const adjustQty = (id, delta) => (items) =>
+  asArray(items).map((it) =>
+    it.id === id ? { ...it, qty: Math.max(0, itemQty(it) + delta) } : it
+  );
+
+/**
+ * Put `item` back at `index` (for Undo) unless it already exists. The
+ * index is clamped, so it still works when the list shrank meanwhile.
+ */
+export const restoreItem = (item, index) => (items) => {
+  const list = asArray(items);
+  if (list.some((it) => it.id === item.id)) return list;
+  const at = Math.min(Math.max(0, Number(index) || 0), list.length);
+  return [...list.slice(0, at), item, ...list.slice(at)];
+};
+
+/** Replace the photo of one item (photo migration). */
+export const setItemImage = (id, image) => (items) =>
+  asArray(items).map((it) => (it.id === id ? { ...it, image } : it));
+
+/** Apply several ops in order as one op. */
+export const composeOps =
+  (...ops) =>
+  (items) =>
+    ops.reduce((acc, op) => op(acc), asArray(items));
+
+/**
+ * Items added/removed between two lists, as ONE op on the live list — or
+ * null when nothing was added or removed. Diffing by id against the
+ * snapshot a form opened with means saving a rename never reverts item
+ * changes made meanwhile on the other phone (or a quantity tap still
+ * saving from the detail page).
+ */
+export const diffItemsOp = (before, after) => {
+  const prev = asArray(before);
+  const next = asArray(after);
+  const beforeIds = new Set(prev.map((it) => it.id));
+  const afterIds = new Set(next.map((it) => it.id));
+  const removed = prev.filter((it) => !afterIds.has(it.id));
+  const added = next.filter((it) => !beforeIds.has(it.id));
+  if (removed.length === 0 && added.length === 0) return null;
+  return composeOps(
+    ...removed.map((it) => removeItem(it.id)),
+    ...added.map((it) => addItem(it))
+  );
+};
+
+/** Shallow sanity check for anything an op returns before it is stored. */
+export const normalizeItems = (items) =>
+  asArray(items).filter((it) => it && typeof it === "object");
