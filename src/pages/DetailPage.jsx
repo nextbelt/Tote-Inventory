@@ -11,8 +11,10 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import ItemEditSheet from "../components/ItemEditSheet";
 import Sheet from "../components/Sheet";
 import { useToast } from "../components/Toast";
+import TotePicker from "../components/TotePicker";
 import { useTotes } from "../hooks/useTotes";
 import { describePosition } from "../utils/constants";
 import { compressImage } from "../utils/images";
@@ -26,6 +28,7 @@ import {
   itemQty,
   removeItem as removeItemOp,
   restoreItem,
+  updateItem,
 } from "../utils/itemOps";
 import { validateImageFile, validateItemName } from "../utils/validation";
 
@@ -36,6 +39,22 @@ const newId = () =>
 
 const EMPTY_ITEMS = [];
 const QTY_FLUSH_MS = 700;
+const HIGHLIGHT_MS = 3500;
+
+const prefersReducedMotion = () =>
+  typeof window !== "undefined" &&
+  typeof window.matchMedia === "function" &&
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/** The editable fields of an item as they are now (for Undo). */
+const snapshotFields = (item, keys) => {
+  const prev = {};
+  keys.forEach((key) => {
+    if (key === "qty") prev.qty = itemQty(item);
+    else prev[key] = item[key] ?? null;
+  });
+  return prev;
+};
 
 /** Coalesced +/- taps (Map itemId → delta) as one item operation. */
 const deltasToOp = (deltas) =>
@@ -54,6 +73,7 @@ export default function DetailPage({
   onEdit,
   onDeleted,
   onShowInGarage,
+  highlightItemId,
 }) {
   const {
     totes,
@@ -98,21 +118,34 @@ export default function DetailPage({
   const [adding, setAdding] = useState(false);
   const [sheet, setSheet] = useState(null); // "move" | "delete" | null
   const [lightbox, setLightbox] = useState(null);
+  // Item being edited / moved: a snapshot of the row as it was tapped, so
+  // the sheet never vanishes mid-edit if the other phone touches the list.
+  const [editing, setEditing] = useState(null);
+  const [movingItem, setMovingItem] = useState(null);
+  // Row elements by ORIGINAL item id (numbers and strings never mix up)
+  const rowRefs = useRef(new Map());
+  const [highlighted, setHighlighted] = useState(null);
 
   const replaceStaged = useCallback((next) => {
     stagedRef.current = next;
     setStaged(next);
   }, []);
 
-  /** Save one item operation; it stays visible while in flight. */
+  /**
+   * Save one item operation; it stays visible while in flight. Resolves to
+   * the saved tote, or null when the save failed (the user has been told —
+   * with `onError` when given, else the service's message).
+   */
   const runOp = useCallback(
-    async (apply) => {
+    async (apply, { onError } = {}) => {
       const key = newId();
       setInflight((prev) => [...prev, { key, apply }]);
       try {
-        await updateItems(toteRef.current.id, apply);
+        return await updateItems(toteRef.current.id, apply);
       } catch (err) {
-        toast.error(err.message);
+        if (onError) onError(err);
+        else toast.error(err.message);
+        return null;
       } finally {
         // The store already holds the saved row by now, so dropping the
         // overlay is seamless (both updates land in the same React batch).
@@ -236,6 +269,103 @@ export default function DetailPage({
       onAction: () => runOp(restoreItem(item, index)),
     });
   };
+
+  // ------ edit one item ------
+  /** Land staged +/- first so the sheet opens on the current count. */
+  const openEdit = (item) => {
+    flushStaged();
+    setEditing(item);
+  };
+
+  /** One updateItem op with only the changed fields; Undo puts them back. */
+  const handleEditSave = async (prev, fields) => {
+    setEditing(null);
+    const keys = Object.keys(fields);
+    if (keys.length === 0) return;
+    // A staged delta must never land on top of an exact count, so flush it
+    // first — the per-tote write queue keeps the order (delta, then set).
+    flushStaged();
+    const saved = await runOp(updateItem(prev.id, fields));
+    if (!saved) return;
+    const list = Array.isArray(saved.items) ? saved.items : [];
+    if (!list.some((it) => it.id === prev.id)) {
+      toast.error(
+        `“${prev.name}” was removed on the other phone, so there was nothing to update.`
+      );
+      return;
+    }
+    const before = snapshotFields(prev, keys);
+    toast.show(`Updated “${fields.name ?? prev.name}”`, {
+      actionLabel: "Undo",
+      onAction: () => runOp(updateItem(prev.id, before)),
+    });
+  };
+
+  // ------ move one item to another tote ------
+  /** From the edit sheet or directly: land staged taps, then pick a tote. */
+  const openMoveItem = (item) => {
+    flushStaged();
+    setEditing(null);
+    setMovingItem(item);
+  };
+
+  /**
+   * Add to the destination FIRST, then remove here — an item can never be
+   * lost, only (on a failed second step) briefly be in both totes.
+   */
+  const handleMoveItem = async (item, dest) => {
+    setMovingItem(null);
+    const source = toteRef.current;
+    const index = items.findIndex((it) => it.id === item.id);
+    const moved = { ...item };
+    try {
+      await updateItems(dest.id, addItem(moved));
+    } catch (err) {
+      toast.error(err.message);
+      return;
+    }
+    const removed = await runOp(removeItemOp(moved.id), {
+      onError: () =>
+        toast.error(
+          `“${moved.name}” was added to “${dest.name}” but couldn't be removed from “${source.name}” — it is now in both. Please check.`
+        ),
+    });
+    if (!removed) return;
+    toast.show(`Moved “${moved.name}” to “${dest.name}”`, {
+      actionLabel: "Undo",
+      onAction: async () => {
+        // Same add-first order on the way back
+        const restored = await runOp(restoreItem(moved, index));
+        if (!restored) return;
+        try {
+          await updateItems(dest.id, removeItemOp(moved.id));
+        } catch {
+          toast.error(
+            `“${moved.name}” is back in “${source.name}” but couldn't be removed from “${dest.name}” — it is now in both. Please check.`
+          );
+        }
+      },
+    });
+  };
+
+  // ------ highlight (opened from search) ------
+  useEffect(() => {
+    if (highlightItemId === undefined || highlightItemId === null) {
+      return undefined;
+    }
+    setHighlighted(highlightItemId);
+    const raf = requestAnimationFrame(() => {
+      rowRefs.current.get(highlightItemId)?.scrollIntoView({
+        block: "center",
+        behavior: prefersReducedMotion() ? "auto" : "smooth",
+      });
+    });
+    const timer = setTimeout(() => setHighlighted(null), HIGHLIGHT_MS);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timer);
+    };
+  }, [highlightItemId]);
 
   // ------ move / delete ------
   const handleMove = async (position) => {
@@ -447,7 +577,13 @@ export default function DetailPage({
               return (
                 <li
                   key={item.id}
-                  className="apple-card flex items-center gap-3 p-2.5"
+                  ref={(el) => {
+                    if (el) rowRefs.current.set(item.id, el);
+                    else rowRefs.current.delete(item.id);
+                  }}
+                  className={`apple-card flex items-center gap-3 p-2.5 ${
+                    highlighted === item.id ? "item-highlight" : ""
+                  }`}
                 >
                   {item.image ? (
                     <button
@@ -468,7 +604,12 @@ export default function DetailPage({
                       <Camera className="h-5 w-5" aria-hidden="true" />
                     </span>
                   )}
-                  <div className="min-w-0 flex-1">
+                  <button
+                    type="button"
+                    onClick={() => openEdit(item)}
+                    aria-label={`Edit ${item.name}`}
+                    className="min-h-[44px] min-w-0 flex-1 rounded-lg text-left"
+                  >
                     <p
                       className={`line-clamp-2 break-words font-semibold leading-snug ${
                         out ? "text-gray-400 line-through dark:text-gray-500" : "text-gray-900 dark:text-gray-100"
@@ -481,7 +622,7 @@ export default function DetailPage({
                         Out — restock?
                       </span>
                     )}
-                  </div>
+                  </button>
                   <div className="flex shrink-0 items-center gap-0.5 rounded-xl bg-gray-100 p-0.5 dark:bg-gray-800">
                     <button
                       type="button"
@@ -596,6 +737,29 @@ export default function DetailPage({
             </button>
           </div>
         </Sheet>
+      )}
+
+      {/* Edit item sheet */}
+      {editing && (
+        <ItemEditSheet
+          key={editing.id}
+          item={editing}
+          onSave={(fields) => handleEditSave(editing, fields)}
+          onClose={() => setEditing(null)}
+          onMove={() => openMoveItem(editing)}
+          onViewPhoto={setLightbox}
+        />
+      )}
+
+      {/* Move item to another tote */}
+      {movingItem && (
+        <TotePicker
+          title={`Move “${movingItem.name}” to…`}
+          totes={Object.values(totesByPosition)}
+          excludeId={tote.id}
+          onPick={(dest) => handleMoveItem(movingItem, dest)}
+          onClose={() => setMovingItem(null)}
+        />
       )}
 
       {/* Photo lightbox */}

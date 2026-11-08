@@ -188,6 +188,11 @@ button {
   border-radius: 10px;
 }
 
+/* Same pulse for an item row opened from search; keeps the card's radius */
+.item-highlight {
+  animation: locate-pulse 1.2s ease-in-out infinite;
+}
+
 /* ---- Motion preferences ---- */
 
 @media (prefers-reduced-motion: reduce) {
@@ -199,7 +204,8 @@ button {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
-  .locate-highlight {
+  .locate-highlight,
+  .item-highlight {
     animation: none;
     box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.9);
   }
