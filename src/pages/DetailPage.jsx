@@ -30,7 +30,9 @@ import {
   restoreItem,
   updateItem,
 } from "../utils/itemOps";
-import { validateImageFile, validateItemName } from "../utils/validation";
+import { leftoverText, parseItems } from "../utils/parseItems";
+import { validateImageFile } from "../utils/validation";
+import ParsePreview from "../components/ParsePreview";
 
 const newId = () =>
   typeof crypto !== "undefined" && crypto.randomUUID
@@ -116,6 +118,8 @@ export default function DetailPage({
   const [newItemImage, setNewItemImage] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [adding, setAdding] = useState(false);
+  const parsedDraft = useMemo(() => parseItems(newItemName), [newItemName]);
+  const draftCount = parsedDraft.items.length;
   const [sheet, setSheet] = useState(null); // "move" | "delete" | null
   const [lightbox, setLightbox] = useState(null);
   // Item being edited / moved: a snapshot of the row as it was tapped, so
@@ -234,19 +238,60 @@ export default function DetailPage({
     }
   };
 
+  /**
+   * Save the drafted items as ONE op. If it fails, the typed text and photo
+   * go back into the box and the error toast offers Retry, which re-runs the
+   * very same op (same item ids, so it can't double-add if the first try
+   * actually landed).
+   */
+  const attemptAdd = (draft) =>
+    runOp(draft.op, {
+      onError: (err) => {
+        setNewItemName((cur) =>
+          cur.trim() ? `${draft.text}\n${cur}` : draft.text
+        );
+        if (draft.image) setNewItemImage((cur) => cur ?? draft.image);
+        toast.error(err.message, {
+          actionLabel: "Retry",
+          duration: 8000,
+          onAction: () => {
+            // Take back what was restored above so it isn't there twice
+            setNewItemName((cur) =>
+              cur === draft.text
+                ? ""
+                : cur.startsWith(`${draft.text}\n`)
+                ? cur.slice(draft.text.length + 1)
+                : cur
+            );
+            setNewItemImage((cur) => (cur === draft.image ? null : cur));
+            attemptAdd(draft);
+          },
+        });
+      },
+    });
+
   const handleAddItem = async () => {
-    const check = validateItemName(newItemName);
-    if (!check.valid) return;
-    setAdding(true);
-    const item = {
+    const parsed = parseItems(newItemName);
+    if (parsed.items.length === 0) return;
+    // A photo goes on a single item only; with several it stays in the box
+    const single = parsed.items.length === 1;
+    const image = single ? newItemImage : null;
+    const built = parsed.items.map(({ name, qty }) => ({
       id: newId(),
-      name: newItemName.trim(),
-      image: newItemImage,
-      qty: 1,
+      name,
+      image,
+      qty,
+    }));
+    const draft = {
+      op: composeOps(...built.map(addItem)),
+      text: parsed.sources.join("\n"),
+      image,
     };
-    setNewItemName("");
-    setNewItemImage(null);
-    await runOp(addItem(item));
+    setAdding(true);
+    // Anything that couldn't be added (too long, past the cap) stays typed
+    setNewItemName(leftoverText(parsed));
+    if (single) setNewItemImage(null);
+    await attemptAdd(draft);
     setAdding(false);
   };
 
@@ -516,18 +561,23 @@ export default function DetailPage({
         {/* Quick add */}
         <div className="apple-card mb-5 p-3">
           <div className="flex gap-2">
-            <input
-              type="text"
+            <textarea
               value={newItemName}
               onChange={(e) => setNewItemName(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") handleAddItem();
+                // Enter adds; Shift+Enter starts another line (one item per line)
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleAddItem();
+                }
               }}
+              rows={Math.min(4, newItemName.split("\n").length)}
               placeholder="Add an item…"
-              maxLength={100}
+              aria-label="Add items"
+              maxLength={5000}
               autoComplete="off"
               autoCapitalize="sentences"
-              className="apple-input min-w-0 flex-1"
+              className="apple-input block min-w-0 flex-1 resize-none leading-normal"
             />
             <label
               className={`flex h-12 w-12 shrink-0 cursor-pointer items-center justify-center rounded-xl border-2 border-dashed ${
@@ -551,13 +601,19 @@ export default function DetailPage({
             <button
               type="button"
               onClick={handleAddItem}
-              disabled={!newItemName.trim() || uploading || adding}
-              className="apple-button flex h-12 w-12 shrink-0 items-center justify-center !p-0 disabled:cursor-not-allowed disabled:opacity-40"
-              aria-label="Add item"
+              disabled={draftCount === 0 || uploading || adding}
+              className={`apple-button flex h-12 shrink-0 items-center justify-center disabled:cursor-not-allowed disabled:opacity-40 ${
+                draftCount > 1
+                  ? "gap-1 whitespace-nowrap !px-3 text-sm"
+                  : "w-12 !p-0"
+              }`}
+              aria-label={draftCount > 1 ? `Add ${draftCount} items` : "Add item"}
             >
               <Plus className="h-5 w-5" aria-hidden="true" />
+              {draftCount > 1 && `Add ${draftCount} items`}
             </button>
           </div>
+          <ParsePreview parsed={parsedDraft} hasImage={Boolean(newItemImage)} />
           {newItemImage && (
             <div className="mt-2 flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
               <img
