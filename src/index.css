@@ -210,3 +210,74 @@ button {
     box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.9);
   }
 }
+
+/* ---- Increased contrast (iOS: Settings > Accessibility > Display > Increase Contrast) ---- */
+
+@media (prefers-contrast: more) {
+  body {
+    background: #ffffff;
+  }
+  .dark body {
+    background: #000000;
+  }
+
+  /* Cards, wall frames and list controls get a solid edge and flat fill */
+  .apple-card {
+    background: #ffffff;
+    border: 2px solid #111827;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .dark .apple-card {
+    background: #000000;
+    border-color: #f9fafb;
+  }
+  .wall-frame {
+    border-width: 2px;
+    border-color: #111827;
+  }
+  .dark .wall-frame {
+    border-color: #f9fafb;
+  }
+  .list-chip {
+    border-width: 2px;
+    border-color: #111827;
+  }
+  .dark .list-chip {
+    border-color: #f9fafb;
+  }
+
+  /* Totes and empty slots: heavier outlines, pure-contrast text */
+  .tote-body,
+  .tote-lid {
+    border-color: #000000;
+    border-width: 2px;
+  }
+  .dark .tote-body,
+  .dark .tote-lid {
+    border-color: #ffffff;
+  }
+  .slot-empty,
+  .slot-empty > span {
+    border-color: #111827;
+    color: #000000;
+  }
+  .dark .slot-empty,
+  .dark .slot-empty > span {
+    border-color: #f9fafb;
+    color: #ffffff;
+  }
+  .tote-body .slot-empty svg {
+    color: #ffffff;
+  }
+
+  .wall-title,
+  .hint-text {
+    color: #000000;
+  }
+  .dark .wall-title,
+  .dark .hint-text {
+    color: #ffffff;
+  }
+}

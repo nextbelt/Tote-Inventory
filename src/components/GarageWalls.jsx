@@ -146,7 +146,7 @@ export default function WallPanel({
 
   return (
     <section aria-label={wall.label} className="px-1 sm:px-2">
-      <div className="rounded-xl border border-gray-200 bg-gradient-to-b from-white to-gray-50 p-1.5 sm:p-3 shadow-inner dark:border-gray-700 dark:from-gray-900 dark:to-gray-950">
+      <div className="wall-frame rounded-xl border border-gray-300 bg-gradient-to-b from-white to-gray-50 p-1.5 sm:p-3 shadow-inner dark:border-gray-600 dark:from-gray-900 dark:to-gray-950">
         <div className={multi ? "flex items-stretch gap-1 sm:gap-2" : ""}>
           {wall.fixtures.map((fixture) => {
             const Renderer = FIXTURE_RENDERERS[fixture.kind];
@@ -169,14 +169,14 @@ export default function WallPanel({
 export function MiniMap({ activeWallId }) {
   const bar = (id, cls) =>
     `${cls} rounded-sm transition-colors ${
-      activeWallId === id ? "bg-blue-500" : "bg-gray-300 dark:bg-gray-600"
+      activeWallId === id ? "bg-blue-500" : "bg-gray-400 dark:bg-gray-500"
     }`;
   return (
     <div aria-hidden="true" className="relative h-10 w-14 shrink-0">
       <div className={bar("front", "absolute inset-x-0 top-0 h-2")} />
       <div className={bar("left", "absolute left-0 top-2.5 bottom-0 w-2")} />
       <div className={bar("right", "absolute right-0 top-2.5 bottom-0 w-2")} />
-      <div className="absolute inset-x-3 bottom-0 border-b-2 border-dashed border-gray-300 dark:border-gray-600" />
+      <div className="absolute inset-x-3 bottom-0 border-b-2 border-dashed border-gray-400 dark:border-gray-500" />
     </div>
   );
 }

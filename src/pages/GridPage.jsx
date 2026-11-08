@@ -7,13 +7,14 @@ import SearchResults from "../components/SearchResults";
 import ShelfEditor from "../components/ShelfEditor";
 import ThemeToggle from "../components/ThemeToggle";
 import TidyUpBanner from "../components/TidyUpBanner";
+import ToteList from "../components/ToteList";
 import { useTotes } from "../hooks/useTotes";
 import { getWallIdForPosition } from "../utils/constants";
 import { restockItems } from "../utils/insights";
 import { prefersReducedMotion } from "../utils/motion";
 import { searchTotes } from "../utils/search";
 import RelativeTime from "../components/RelativeTime";
-import { latestModified, toteModifiedDate } from "../utils/time";
+import { latestModified } from "../utils/time";
 
 export default function GridPage({
   onSelectTote,
@@ -134,9 +135,6 @@ export default function GridPage({
   const occupied = Object.keys(totesByPosition).length;
   const restockCount = useMemo(() => restockItems(visibleTotes).length, [visibleTotes]);
   const lastUpdated = latestModified(totes);
-  const sortedTotes = [...totes].sort((a, b) =>
-    a.position.localeCompare(b.position, undefined, { numeric: true })
-  );
 
   return (
     <div className="min-h-[100dvh] pb-8" style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 2rem)" }}>
@@ -310,7 +308,7 @@ export default function GridPage({
                 >
                   {walls.map((wall) => (
                     <div key={wall.id} className="wall-panel px-3 sm:px-0">
-                      <p className="mb-1 text-center text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                      <p className="wall-title mb-1 text-center text-xs font-semibold uppercase tracking-wide text-gray-700 dark:text-gray-300">
                         {wall.label}
                       </p>
                       <WallPanel
@@ -335,54 +333,16 @@ export default function GridPage({
                   ))}
                 </div>
 
-                <p className="mt-3 text-center text-xs text-gray-500 dark:text-gray-400">
+                <p className="hint-text mt-3 text-center text-xs text-gray-700 dark:text-gray-300">
                   Swipe or use the tabs to change walls · Tap a tote to open it
                   · Tap an empty slot to add one
                 </p>
               </>
             )}
 
-            {mode === "list" &&
-              (sortedTotes.length === 0 ? (
-                <div className="apple-card p-8 text-center text-gray-500 dark:text-gray-400">
-                  No totes yet — switch to Garage and tap an empty slot.
-                </div>
-              ) : (
-                <ul className="space-y-2" aria-label="All totes">
-                  {sortedTotes.map((tote) => {
-                    const count = Array.isArray(tote.items)
-                      ? tote.items.length
-                      : 0;
-                    const modified = toteModifiedDate(tote);
-                    return (
-                      <li key={tote.id}>
-                        <button
-                          type="button"
-                          onClick={() => onSelectTote(tote)}
-                          className="apple-card flex min-h-[56px] w-full items-center gap-3 p-3 text-left"
-                        >
-                          <span className="w-11 shrink-0 rounded-lg bg-gray-900 px-2 py-1.5 text-center text-xs font-bold text-yellow-300">
-                            {tote.position}
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate font-semibold text-gray-900 dark:text-gray-100">
-                              {tote.name}
-                            </span>
-                            {modified && (
-                              <span className="block text-xs text-gray-500 dark:text-gray-400">
-                                Modified <RelativeTime date={modified} />
-                              </span>
-                            )}
-                          </span>
-                          <span className="shrink-0 rounded-full bg-blue-100 px-2.5 py-1 text-xs font-semibold text-blue-800 dark:bg-blue-950 dark:text-blue-300">
-                            {count} item{count === 1 ? "" : "s"}
-                          </span>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              ))}
+            {mode === "list" && (
+              <ToteList totes={totes} onSelectTote={onSelectTote} />
+            )}
           </>
         )}
       </main>
