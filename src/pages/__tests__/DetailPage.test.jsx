@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import DetailPage from "../DetailPage";
@@ -381,6 +381,311 @@ describe("DetailPage keeps local edits as operations on top of the live store", 
       visibility.mockRestore();
     }
     expect(updateItems).toHaveBeenCalledTimes(1);
+  });
+
+  // ------ edit an item ------
+  it("tapping an item's name opens the edit sheet; staged +/- taps are flushed BEFORE the exact count lands (no double-apply)", async () => {
+    const { db } = setup([lantern, rope]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Add one Lantern" })); // staged +1 → 3
+    await user.click(screen.getByRole("button", { name: "Edit Lantern" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Edit item" });
+    expect(within(dialog).getByLabelText("Count")).toHaveValue(3); // current, not stale
+    // Opening the sheet landed the staged tap already
+    expect(updateItems).toHaveBeenCalledTimes(1);
+    expect(db.items[0].qty).toBe(3);
+
+    await user.clear(within(dialog).getByLabelText("Count"));
+    await user.type(within(dialog).getByLabelText("Count"), "5");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit item" })).not.toBeInTheDocument());
+    await waitFor(() => expect(updateItems).toHaveBeenCalledTimes(2));
+    // Exact count: 5, never 3+1 or 5+1
+    expect(db.items).toEqual([{ ...lantern, qty: 5 }, rope]);
+    expect(screen.getByLabelText("Quantity: 5")).toBeInTheDocument();
+
+    // Only the changed field travelled — the other phone's rename survives
+    const op = updateItems.mock.calls[1][1];
+    expect(op([{ ...lantern, name: "Lamp", qty: 9 }])).toEqual([{ ...lantern, name: "Lamp", qty: 5 }]);
+
+    // Undo restores the count as it was shown when the sheet opened (3)
+    const [msg, opts] = toastMock.show.mock.calls.at(-1);
+    expect(msg).toBe("Updated “Lantern”");
+    expect(opts.actionLabel).toBe("Undo");
+    await act(async () => {
+      opts.onAction();
+    });
+    await waitFor(() => expect(db.items[0].qty).toBe(3));
+  });
+
+  it("a staged tap made while the sheet is open is still flushed before the save", async () => {
+    const { db } = setup([lantern]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Edit Lantern" }));
+    // Not reachable through the modal, but guard the ordering regardless
+    await user.click(screen.getByRole("button", { name: "Add one Lantern" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit item" });
+    await user.clear(within(dialog).getByLabelText("Count"));
+    await user.type(within(dialog).getByLabelText("Count"), "10");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(updateItems).toHaveBeenCalledTimes(2));
+    // adjust(+1) first, then the absolute set — the set wins
+    expect(db.items[0].qty).toBe(10);
+  });
+
+  it("renaming saves through updateItem and Undo brings the old name back", async () => {
+    const { db } = setup([lantern]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Edit Lantern" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit item" });
+    await user.clear(within(dialog).getByLabelText("Name"));
+    await user.type(within(dialog).getByLabelText("Name"), "Big lantern");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText("Big lantern")).toBeInTheDocument();
+    await waitFor(() => expect(db.items).toEqual([{ ...lantern, name: "Big lantern" }]));
+    expect(toastMock.show).toHaveBeenCalledWith("Updated “Big lantern”", expect.objectContaining({ actionLabel: "Undo" }));
+
+    const [, opts] = toastMock.show.mock.calls.at(-1);
+    await act(async () => {
+      opts.onAction();
+    });
+    expect(await screen.findByText("Lantern")).toBeInTheDocument();
+    expect(db.items).toEqual([lantern]);
+  });
+
+  it("Cancel in the edit sheet saves nothing; Save with no changes saves nothing", async () => {
+    setup([lantern]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Edit Lantern" }));
+    await user.type(screen.getByLabelText("Name"), " x");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Edit Lantern" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(updateItems).not.toHaveBeenCalled();
+    expect(toastMock.show).not.toHaveBeenCalled();
+  });
+
+  it("tells the user when the item was removed on the other phone before the save landed", async () => {
+    const { db, otherPhone } = setup([lantern, rope]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Edit Lantern" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit item" });
+    await user.clear(within(dialog).getByLabelText("Count"));
+    await user.type(within(dialog).getByLabelText("Count"), "4");
+    otherPhone([rope]); // they removed the lantern meanwhile
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(toastMock.error).toHaveBeenCalledWith(expect.stringMatching(/“Lantern” was removed on the other phone/))
+    );
+    expect(db.items).toEqual([rope]); // the no-op op added nothing back
+    expect(toastMock.show).not.toHaveBeenCalled(); // no bogus Undo
+  });
+
+  // ------ move an item to another tote ------
+  const paint = {
+    id: 2,
+    name: "Paint",
+    position: "C4",
+    items: [],
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-02-01T00:00:00.000Z",
+  };
+
+  /** Two totes in the fake database; ops are applied to whichever id is named. */
+  function setupTwoTotes(sourceItems, { failRemoveFromSource = false, failRemoveFromDest = false } = {}) {
+    setup(sourceItems);
+    const dbs = { 1: { items: sourceItems }, 2: { items: [] } };
+    const rows = () => [
+      { ...tote, items: dbs[1].items },
+      { ...paint, items: dbs[2].items },
+    ];
+    updateItems.mockReset().mockImplementation(async (id, op) => {
+      const before = dbs[id].items;
+      const after = op(before);
+      const isRemove = after.length < before.length;
+      if (isRemove && id === 1 && failRemoveFromSource) throw new Error("Couldn't save your changes. Please try again.");
+      if (isRemove && id === 2 && failRemoveFromDest) throw new Error("Couldn't save your changes. Please try again.");
+      dbs[id].items = after;
+      const saved = { ...rows().find((t) => t.id === id), updated_at: new Date().toISOString() };
+      ext.set((s) => ({ ...s, totes: rows() }));
+      return saved;
+    });
+    ext.set((s) => ({ ...s, totes: rows(), totesByPosition: { B3: rows()[0], C4: rows()[1] } }));
+    return { dbs };
+  }
+
+  async function moveLanternToPaint(user) {
+    await user.click(screen.getByRole("button", { name: "Edit Lantern" }));
+    await user.click(screen.getByRole("button", { name: /Move to another tote/ }));
+    const picker = screen.getByRole("dialog", { name: "Move “Lantern” to…" });
+    expect(within(picker).queryByText("Camping Gear")).not.toBeInTheDocument(); // only OTHER totes
+    await user.click(within(picker).getByRole("button", { name: /Paint/ }));
+  }
+
+  it("moves an item by adding it to the destination FIRST, then removing it here; keeps id, name, photo and qty", async () => {
+    const photoLantern = { ...lantern, image: "https://cdn/l.jpg", qty: 3 };
+    const { dbs } = setupTwoTotes([photoLantern, rope]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await moveLanternToPaint(user);
+
+    await waitFor(() => expect(updateItems).toHaveBeenCalledTimes(2));
+    expect(updateItems.mock.calls[0][0]).toBe(2); // add to Paint first
+    expect(updateItems.mock.calls[1][0]).toBe(1); // then remove from here
+    expect(dbs[2].items).toEqual([photoLantern]);
+    expect(dbs[1].items).toEqual([rope]);
+    await waitFor(() => expect(screen.queryByText("Lantern")).not.toBeInTheDocument());
+    expect(toastMock.show).toHaveBeenCalledWith("Moved “Lantern” to “Paint”", expect.objectContaining({ actionLabel: "Undo" }));
+  });
+
+  it("flushes a staged tap for the item before moving, so the moved copy carries the quantity you saw", async () => {
+    const { dbs } = setupTwoTotes([lantern]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Add one Lantern" })); // 2 → 3, staged
+    await moveLanternToPaint(user);
+
+    await waitFor(() => expect(updateItems).toHaveBeenCalledTimes(3));
+    expect(updateItems.mock.calls.map((c) => c[0])).toEqual([1, 2, 1]); // flush, add, remove
+    expect(dbs[2].items).toEqual([{ ...lantern, qty: 3 }]);
+    expect(dbs[1].items).toEqual([]);
+  });
+
+  it("when the add to the destination fails nothing changes here and the service error is shown", async () => {
+    const { dbs } = setupTwoTotes([lantern]);
+    const real = updateItems.getMockImplementation();
+    updateItems.mockImplementation(async (id, op) => {
+      if (id === 2) throw new Error("Couldn't save your changes. Please try again.");
+      return real(id, op);
+    });
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await moveLanternToPaint(user);
+
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith("Couldn't save your changes. Please try again."));
+    expect(updateItems).toHaveBeenCalledTimes(1);
+    expect(dbs[1].items).toEqual([lantern]);
+    expect(screen.getByText("Lantern")).toBeInTheDocument();
+    expect(toastMock.show).not.toHaveBeenCalled();
+  });
+
+  it("when the remove from here fails after the add succeeded, says the item is now in both totes", async () => {
+    const { dbs } = setupTwoTotes([lantern], { failRemoveFromSource: true });
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await moveLanternToPaint(user);
+
+    await waitFor(() =>
+      expect(toastMock.error).toHaveBeenCalledWith(expect.stringMatching(/added to “Paint” but couldn't be removed from “Camping Gear” — it is now in both/))
+    );
+    expect(dbs[2].items).toEqual([lantern]); // never lost
+    expect(dbs[1].items).toEqual([lantern]);
+    expect(screen.getByText("Lantern")).toBeInTheDocument(); // overlay dropped, still here
+    expect(toastMock.show).not.toHaveBeenCalled(); // no Undo for a half-done move
+  });
+
+  it("Undo puts the item back here at its old index FIRST, then removes it from the destination", async () => {
+    const { dbs } = setupTwoTotes([rope, lantern, { id: "i3", name: "Glue", qty: 1 }]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await moveLanternToPaint(user);
+    await waitFor(() => expect(updateItems).toHaveBeenCalledTimes(2));
+    expect(dbs[1].items.map((i) => i.name)).toEqual(["Rope", "Glue"]);
+
+    const [, opts] = toastMock.show.mock.calls.at(-1);
+    await act(async () => {
+      await opts.onAction();
+    });
+
+    expect(updateItems).toHaveBeenCalledTimes(4);
+    expect(updateItems.mock.calls[2][0]).toBe(1); // restore here first
+    expect(updateItems.mock.calls[3][0]).toBe(2); // then remove from Paint
+    expect(dbs[1].items.map((i) => i.name)).toEqual(["Rope", "Lantern", "Glue"]);
+    expect(dbs[2].items).toEqual([]);
+    expect(await screen.findByText("Lantern")).toBeInTheDocument();
+  });
+
+  it("Undo whose second step fails says the item is now in both totes (never lost)", async () => {
+    const { dbs } = setupTwoTotes([lantern], { failRemoveFromDest: true });
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await moveLanternToPaint(user);
+    await waitFor(() => expect(updateItems).toHaveBeenCalledTimes(2));
+    const [, opts] = toastMock.show.mock.calls.at(-1);
+    await act(async () => {
+      await opts.onAction();
+    });
+
+    expect(toastMock.error).toHaveBeenCalledWith(
+      expect.stringMatching(/back in “Camping Gear” but couldn't be removed from “Paint” — it is now in both/)
+    );
+    expect(dbs[1].items).toEqual([lantern]);
+    expect(dbs[2].items).toEqual([lantern]);
+  });
+
+  // ------ highlight (opened from search) ------
+  it("highlightItemId scrolls that row into view and pulses it briefly", async () => {
+    setup([lantern, rope]);
+    const scroll = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
+    const view = render(<DetailPage {...props} highlightItemId="i2" />);
+
+    await waitFor(() => expect(scroll).toHaveBeenCalledTimes(1));
+    const ropeRow = screen.getByText("Rope").closest("li");
+    expect(scroll.mock.instances[0]).toBe(ropeRow);
+    expect(scroll).toHaveBeenCalledWith(expect.objectContaining({ block: "center" }));
+    expect(ropeRow).toHaveClass("item-highlight");
+    expect(screen.getByText("Lantern").closest("li")).not.toHaveClass("item-highlight");
+
+    // Changing the target highlights the new row
+    view.rerender(<DetailPage {...props} highlightItemId="i1" />);
+    await waitFor(() => expect(scroll).toHaveBeenCalledTimes(2));
+    expect(scroll.mock.instances[1]).toBe(screen.getByText("Lantern").closest("li"));
+    expect(screen.getByText("Lantern").closest("li")).toHaveClass("item-highlight");
+    expect(ropeRow).not.toHaveClass("item-highlight");
+  });
+
+  it("highlight matches the ORIGINAL id value — a numeric legacy id is not matched by its string form", async () => {
+    const legacy = { id: 7, name: "Old drill" };
+    setup([legacy, { id: "7", name: "Impostor", qty: 1 }]);
+    const scroll = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
+    render(<DetailPage {...props} highlightItemId={7} />);
+
+    await waitFor(() => expect(scroll).toHaveBeenCalledTimes(1));
+    expect(scroll.mock.instances[0]).toBe(screen.getByText("Old drill").closest("li"));
+    expect(screen.getByText("Impostor").closest("li")).not.toHaveClass("item-highlight");
+  });
+
+  it("without highlightItemId nothing scrolls and no row is highlighted", async () => {
+    setup([lantern]);
+    const scroll = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
+    render(<DetailPage {...props} />);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(scroll).not.toHaveBeenCalled();
+    expect(document.querySelector(".item-highlight")).toBeNull();
   });
 
   it("shows the service's friendly error when an op fails and drops the optimistic overlay", async () => {

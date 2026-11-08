@@ -47,6 +47,31 @@ export const restoreItem = (item, index) => (items) => {
 export const setItemImage = (id, image) => (items) =>
   asArray(items).map((it) => (it.id === id ? { ...it, image } : it));
 
+const EDITABLE_FIELDS = ["name", "image", "qty"];
+
+/**
+ * Edit one item: shallow-merge `fields` (only name / image / qty are taken;
+ * anything else is ignored) into the item with this id. `qty` is an
+ * absolute set, clamped at zero; a non-numeric qty is ignored. No-op when
+ * the id is gone — the caller can tell by checking the saved list.
+ */
+export const updateItem = (id, fields) => (items) => {
+  const list = asArray(items);
+  const patch = {};
+  EDITABLE_FIELDS.forEach((key) => {
+    if (!fields || !Object.prototype.hasOwnProperty.call(fields, key)) return;
+    if (key === "qty") {
+      const q = Number(fields.qty);
+      if (!Number.isFinite(q)) return;
+      patch.qty = Math.max(0, q);
+    } else {
+      patch[key] = fields[key];
+    }
+  });
+  if (Object.keys(patch).length === 0) return list;
+  return list.map((it) => (it.id === id ? { ...it, ...patch } : it));
+};
+
 /** Apply several ops in order as one op. */
 export const composeOps =
   (...ops) =>
