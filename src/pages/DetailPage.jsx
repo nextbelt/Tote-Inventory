@@ -150,6 +150,22 @@ export default function DetailPage({
     [toast, updateItems]
   );
 
+  // A Home Screen app on iPhone doesn't unmount when the phone locks or the
+  // app is swiped away — so land staged +/- taps the moment the page hides
+  // instead of waiting out the debounce (which may never run).
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flushStaged();
+    };
+    const onPageHide = () => flushStaged();
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", onPageHide);
+    };
+  }, [flushStaged]);
+
   // ------ quick add ------
   const handlePhotoPick = async (e) => {
     const file = e.target.files[0];
@@ -236,11 +252,13 @@ export default function DetailPage({
   const handleDelete = async () => {
     const snapshot = { name: tote.name, position: tote.position, items };
     setSheet(null);
+    // The snapshot already carries any staged +/- taps. Hold them while the
+    // delete is in flight so the debounce can't fire a save at a tote that
+    // is disappearing (which would show a bogus "couldn't find" error).
+    clearTimeout(saveTimerRef.current);
     try {
       await deleteTote(tote.id);
-      // The snapshot already carries any staged +/- taps; don't let the
-      // unmount flush try to save them to a tote that no longer exists.
-      clearTimeout(saveTimerRef.current);
+      // …and never let the unmount flush try to save them afterwards.
       replaceStaged(new Map());
       onDeleted();
       toast.show(`Deleted “${snapshot.name}”`, {
@@ -250,6 +268,10 @@ export default function DetailPage({
       });
     } catch (err) {
       toast.error(err.message);
+      // Delete failed, so the tote is still here — save the held taps
+      if (stagedRef.current.size > 0) {
+        saveTimerRef.current = setTimeout(flushStaged, QTY_FLUSH_MS);
+      }
     }
   };
 

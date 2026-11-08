@@ -214,6 +214,83 @@ describe("DetailPage keeps local edits as operations on top of the live store", 
     expect(screen.getByLabelText("Quantity: 3")).toBeInTheDocument();
   });
 
+  it("saves staged taps immediately when the app goes to the background (phone locked / app swiped away)", async () => {
+    const { db } = setup([lantern]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Add one Lantern" }));
+    expect(updateItems).not.toHaveBeenCalled(); // still inside the debounce
+
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    try {
+      await act(async () => {
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      // Saved right away — no waiting for the 700 ms debounce
+      expect(updateItems).toHaveBeenCalledTimes(1);
+      expect(db.items).toEqual([{ ...lantern, qty: 3 }]);
+
+      // A following pagehide finds nothing left to save (no double-apply)
+      await act(async () => {
+        window.dispatchEvent(new Event("pagehide"));
+      });
+      expect(updateItems).toHaveBeenCalledTimes(1);
+    } finally {
+      visibility.mockRestore();
+    }
+  });
+
+  it("holds staged taps while a delete is in flight, then drops them (no bogus 'couldn't find' error)", async () => {
+    setup([lantern]);
+    let finishDelete;
+    const deleting = new Promise((r) => (finishDelete = r));
+    const deleteTote = vi.fn(() => deleting);
+    ext.set((s) => ({ ...s, deleteTote }));
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Add one Lantern" })); // staged +1
+    await user.click(screen.getByRole("button", { name: "Delete tote" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    expect(deleteTote).toHaveBeenCalledWith(1);
+
+    // Well past the debounce while the delete is still in flight: nothing saves
+    await new Promise((r) => setTimeout(r, 900));
+    expect(updateItems).not.toHaveBeenCalled();
+
+    await act(async () => {
+      finishDelete();
+      await deleting;
+    });
+    expect(props.onDeleted).toHaveBeenCalled();
+    // The Undo snapshot carries the staged +1
+    const [, opts] = toastMock.show.mock.calls.at(-1);
+    expect(opts.actionLabel).toBe("Undo");
+    expect(updateItems).not.toHaveBeenCalled();
+    expect(toastMock.error).not.toHaveBeenCalled();
+  });
+
+  it("saves the held taps if the delete fails", async () => {
+    const { db } = setup([lantern]);
+    const deleteTote = vi.fn(async () => {
+      throw new Error("Couldn't delete that tote. Please try again.");
+    });
+    ext.set((s) => ({ ...s, deleteTote }));
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Add one Lantern" }));
+    await user.click(screen.getByRole("button", { name: "Delete tote" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() =>
+      expect(toastMock.error).toHaveBeenCalledWith("Couldn't delete that tote. Please try again.")
+    );
+    await waitFor(() => expect(updateItems).toHaveBeenCalledTimes(1), { timeout: 2500 });
+    expect(db.items).toEqual([{ ...lantern, qty: 3 }]);
+  });
+
   it("shows the service's friendly error when an op fails and drops the optimistic overlay", async () => {
     setup([lantern], { failWith: new Error("Couldn't save your changes. Please try again.") });
     const user = userEvent.setup();
