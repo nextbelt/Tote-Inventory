@@ -22,6 +22,12 @@ export default function ToteInventoryApp() {
   // Which item a search result pointed at (original id value, number or string)
   const [highlightItemId, setHighlightItemId] = useState(undefined);
 
+  // Remember where the garage/results page was scrolled before leaving it.
+  // Only while the grid is on screen: other pages have their own scroll.
+  const rememberGridScroll = () => {
+    if (view === "garage") gridScrollRef.current = window.scrollY || 0;
+  };
+
   const handleBack = () => {
     setView("garage");
     setSelectedTote(null);
@@ -31,13 +37,14 @@ export default function ToteInventoryApp() {
   };
 
   const handleSelectTote = (tote, { itemId } = {}) => {
-    gridScrollRef.current = window.scrollY || 0;
+    rememberGridScroll();
     setSelectedTote(tote);
     setHighlightItemId(itemId);
     setView("detail");
   };
 
   const handleAddTote = (position) => {
+    rememberGridScroll();
     setSelectedPosition(position);
     setEditingTote(null);
     setView("form");

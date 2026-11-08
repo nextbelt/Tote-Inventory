@@ -152,6 +152,54 @@ describe("App", () => {
     }
   });
 
+  it("restores the scroll where the user was after adding a tote, not an older tote's", async () => {
+    seedTotes();
+    const user = userEvent.setup();
+    const scrollTo = vi.fn();
+    const originalScrollTo = window.scrollTo;
+    window.scrollTo = scrollTo;
+    try {
+      render(<App />);
+      await screen.findByLabelText(/^B3: Camping Gear/);
+      await user.type(screen.getByLabelText("Search totes and items"), "lantern");
+
+      // Open a tote at 600 and come back (restored to 600)
+      window.scrollY = 600;
+      await user.click(await screen.findByRole("button", { name: /Lantern/ }));
+      await screen.findByRole("heading", { name: "Camping Gear" });
+      window.scrollY = 0;
+      await user.click(screen.getByRole("button", { name: "Garage" }));
+      await screen.findByRole("list", { name: "Search results" });
+      expect(scrollTo).toHaveBeenLastCalledWith(0, 600);
+
+      // Clear the search, scroll to the top, start adding a tote, then Back
+      await user.clear(screen.getByLabelText("Search totes and items"));
+      scrollTo.mockClear();
+      window.scrollY = 0;
+      await user.click(
+        await screen.findByRole("button", { name: "A1: empty slot, add a tote" })
+      );
+      await screen.findByRole("heading", { name: "New Tote" });
+      await user.click(screen.getByRole("button", { name: "Back" }));
+      await screen.findByLabelText(/^B3: Camping Gear/);
+      expect(scrollTo).not.toHaveBeenCalled();
+
+      // Same again from a non-zero position: lands where the user left
+      window.scrollY = 250;
+      await user.click(
+        await screen.findByRole("button", { name: "A1: empty slot, add a tote" })
+      );
+      await screen.findByRole("heading", { name: "New Tote" });
+      window.scrollY = 0;
+      await user.click(screen.getByRole("button", { name: "Back" }));
+      await screen.findByLabelText(/^B3: Camping Gear/);
+      expect(scrollTo).toHaveBeenLastCalledWith(0, 250);
+    } finally {
+      window.scrollTo = originalScrollTo;
+      window.scrollY = 0;
+    }
+  });
+
   it("clears the search when 'Show me' is used from a tote page", async () => {
     seedTotes();
     const user = userEvent.setup();
