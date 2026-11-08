@@ -1,6 +1,7 @@
 import {
   Camera,
   ChevronLeft,
+  Clock,
   Edit2,
   MapPin,
   Minus,
@@ -15,6 +16,7 @@ import { useToast } from "../components/Toast";
 import { useTotes } from "../hooks/useTotes";
 import { describePosition } from "../utils/constants";
 import { compressImage } from "../utils/images";
+import { formatDateTime, formatRelative } from "../utils/time";
 import { toteService } from "../services/toteService";
 import { validateImageFile, validateItemName } from "../utils/validation";
 
@@ -269,7 +271,17 @@ export default function DetailPage({
       </header>
 
       <main className="mx-auto max-w-2xl px-4 pt-4">
-        <h1 className="apple-title mb-2 text-2xl sm:text-3xl">{tote.name}</h1>
+        <h1 className="apple-title mb-1 text-2xl sm:text-3xl">{tote.name}</h1>
+        {(tote.updated_at || tote.created_at) && (
+          <p className="mb-2 flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+            <Clock className="h-3.5 w-3.5" aria-hidden="true" />
+            Last modified{" "}
+            <time dateTime={tote.updated_at || tote.created_at}>
+              {formatDateTime(tote.updated_at || tote.created_at)}
+            </time>
+            <span>· {formatRelative(tote.updated_at || tote.created_at)}</span>
+          </p>
+        )}
         <button
           type="button"
           onClick={() => onShowInGarage(tote.position)}

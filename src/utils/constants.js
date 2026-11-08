@@ -16,17 +16,19 @@ export const DEFAULT_LAYOUT = {
 export const MAX_SIDE_SHELVES = 12;
 export const MAX_SIDE_COLUMNS = 4;
 
-// Front-wall rack layout: columns A/B and F/G have 5 levels; C/D/E sit at
-// floor level around the workbench (levels 4–5 only). null = no slot.
+// Front-wall physical order, left → right: A/B rack, F/G rack, then the
+// workbench with C/D/E at floor level (levels 4–5 only). Slot IDs keep their
+// letters — only the on-screen placement follows the real garage.
+// null = no slot.
 export const SHELF_LAYOUT = [
-  ["A1", "B1", null, null, null, "F1", "G1"],
-  ["A2", "B2", null, null, null, "F2", "G2"],
-  ["A3", "B3", null, null, null, "F3", "G3"],
-  ["A4", "B4", "C4", "D4", "E4", "F4", "G4"],
-  ["A5", "B5", "C5", "D5", "E5", "F5", "G5"],
+  ["A1", "B1", "F1", "G1", null, null, null],
+  ["A2", "B2", "F2", "G2", null, null, null],
+  ["A3", "B3", "F3", "G3", null, null, null],
+  ["A4", "B4", "F4", "G4", "C4", "D4", "E4"],
+  ["A5", "B5", "F5", "G5", "C5", "D5", "E5"],
 ];
 
-export const COLUMN_LABELS = ["A", "B", "C", "D", "E", "F", "G"];
+export const COLUMN_LABELS = ["A", "B", "F", "G", "C", "D", "E"];
 
 const FRONT_WALL = {
   id: "front",
@@ -46,17 +48,8 @@ const FRONT_WALL = {
       ],
     },
     {
-      id: "workbench",
-      label: "Workbench",
-      kind: "workbench",
-      rows: [
-        ["C4", "D4", "E4"],
-        ["C5", "D5", "E5"],
-      ],
-    },
-    {
       id: "rack-fg",
-      label: "Right rack",
+      label: "Middle rack",
       kind: "rack",
       rows: [
         ["F1", "G1"],
@@ -64,6 +57,15 @@ const FRONT_WALL = {
         ["F3", "G3"],
         ["F4", "G4"],
         ["F5", "G5"],
+      ],
+    },
+    {
+      id: "workbench",
+      label: "Workbench",
+      kind: "workbench",
+      rows: [
+        ["C4", "D4", "E4"],
+        ["C5", "D5", "E5"],
       ],
     },
   ],
