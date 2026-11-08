@@ -1,6 +1,7 @@
 import { Plus, X } from "lucide-react";
 import { useId, useState } from "react";
 import Sheet from "./Sheet";
+import { tagColor } from "../utils/tagColors";
 import {
   MAX_TAG_LENGTH,
   MAX_TAGS_PER_TOTE,
@@ -83,14 +84,15 @@ export default function TagEditor({ tags, suggestions = [], onSave, onClose }) {
           {list.map((tag) => (
             <li
               key={tag}
-              className="flex items-center rounded-full bg-blue-50 pl-3 text-sm font-semibold text-blue-700 dark:bg-blue-950 dark:text-blue-300"
+              className={`flex items-center rounded-full pl-3 text-sm font-semibold ${tagColor(tag).chip}`}
             >
               {tag}
+              {/* No colour of its own: the X inherits the chip's text colour */}
               <button
                 type="button"
                 onClick={() => remove(tag)}
                 aria-label={`Remove tag ${tag}`}
-                className="flex h-11 w-10 items-center justify-center rounded-full text-blue-500 dark:text-blue-400"
+                className="flex h-11 w-10 items-center justify-center rounded-full"
               >
                 <X className="h-4 w-4" aria-hidden="true" />
               </button>

@@ -1,3 +1,5 @@
+import { isReservedPosition } from "./reservedRows";
+
 // Forgiving search across totes and their items: partial words, minor
 // misspellings, and singular/plural variants all match, and results come back
 // best match first.
@@ -319,7 +321,7 @@ export function findSimilarItems(totes, text, { excludeToteId, limit = 2 } = {})
   const out = [];
   for (const tote of totes) {
     if (!tote || typeof tote !== "object") continue;
-    if (typeof tote.position === "string" && tote.position.startsWith("__")) continue;
+    if (isReservedPosition(tote.position)) continue;
     if (excludeToteId !== undefined && excludeToteId !== null && tote.id === excludeToteId) {
       continue;
     }
