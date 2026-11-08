@@ -11,6 +11,7 @@ import { dataUriToBlob, findEmbeddedPhotos, stripForCache } from "../utils/maint
 import {
   CONFIG_POSITION,
   REMOVED_ITEMS_POSITION,
+  RESERVED_PREFIX,
   appendRemovedEntries,
   isExpired,
   isReservedPosition,
@@ -579,22 +580,34 @@ export const toteService = {
       if (!supabase) {
         const totes = getLocalTotes();
         const idx = totes.findIndex((t) => t.id === id);
-        if (idx < 0) throw new Error("Couldn't find that tote to update.");
+        // A reserved row (soft-deleted tombstone, settings, bin) is not a
+        // tote: patching it would quietly undelete / corrupt it.
+        if (idx < 0 || isReservedPosition(totes[idx].position)) {
+          throw new UserFacingError(NOT_FOUND_MESSAGE);
+        }
         totes[idx] = { ...totes[idx], ...patch };
         saveLocalTotes(totes);
         return totes[idx];
       }
 
       // ---------- cloud mode ----------
+      // The reserved-position filter is part of the write, so a rename or
+      // move from a page opened before the other phone deleted this tote
+      // can never revive the tombstone (and skip the slot check). Reads
+      // the row count instead of .single() so "no row" is reported as
+      // "couldn't find", exactly as before soft delete.
       try {
         const { data, error } = await supabase
           .from("totes")
           .update(patch)
           .eq("id", id)
-          .select()
-          .single();
+          .not("position", "match", `^${RESERVED_PREFIX}`)
+          .select();
         if (error) throw error;
-        return data;
+        if (!Array.isArray(data) || data.length === 0) {
+          throw new UserFacingError(NOT_FOUND_MESSAGE);
+        }
+        return data[0];
       } catch (err) {
         throw friendlyError(err, "save your changes");
       }

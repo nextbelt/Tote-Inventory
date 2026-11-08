@@ -90,13 +90,24 @@ export const isRemovedEntry = (entry) =>
       typeof entry.item === "object"
   );
 
+const isDataUri = (v) => typeof v === "string" && v.startsWith("data:");
+
+/**
+ * An item safe to keep in the bin: an embedded base64 photo is dropped
+ * (null). The bin holds up to 200 entries, and one legacy data-URI can be
+ * several MB — enough to overflow the offline cache (cloud) or the whole
+ * store (local mode). Storage URLs are kept.
+ */
+export const stripEmbeddedImage = (item) =>
+  isDataUri(item?.image) ? { ...item, image: null } : item;
+
 /** Build bin entries for items removed from `tote` at `removedAt`. */
 export function makeRemovedEntries(tote, items, removedAt = new Date().toISOString()) {
   return asArray(items)
     .filter((item) => item && typeof item === "object")
     .map((item) => ({
       id: removedEntryId(tote?.id, item.id, removedAt),
-      item,
+      item: stripEmbeddedImage(item),
       toteId: tote?.id ?? null,
       toteName: tote?.name ?? "",
       position: tote?.position ?? null,

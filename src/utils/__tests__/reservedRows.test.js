@@ -7,11 +7,39 @@ import {
   parseTombstone,
   pruneRemovedEntries,
   removedEntriesFromRows,
+  stripEmbeddedImage,
   toDeletedEntry,
   tombstonePosition,
 } from "../reservedRows";
 
 const DAY = 24 * 60 * 60 * 1000;
+
+describe("removed entries never keep embedded photos", () => {
+  const dataUri = `data:image/jpeg;base64,${"a".repeat(64)}`;
+  const tote = { id: 1, name: "Camping Gear", position: "B3" };
+
+  it("makeRemovedEntries nulls a data-URI image but keeps storage URLs", () => {
+    const [a, b, c] = makeRemovedEntries(
+      tote,
+      [
+        { id: "x", name: "Vase", image: dataUri },
+        { id: "y", name: "Bowl", image: "https://cdn.example/bowl.jpg" },
+        { id: "z", name: "Lights" },
+      ],
+      "2026-02-01T00:00:00.000Z"
+    );
+    expect(a.item).toEqual({ id: "x", name: "Vase", image: null });
+    expect(b.item.image).toBe("https://cdn.example/bowl.jpg");
+    expect(c.item).toEqual({ id: "z", name: "Lights" });
+    expect(JSON.stringify([a, b, c])).not.toContain("data:");
+  });
+
+  it("stripEmbeddedImage is a no-op for non-embedded images", () => {
+    const item = { id: "y", image: "https://cdn.example/bowl.jpg" };
+    expect(stripEmbeddedImage(item)).toBe(item);
+    expect(stripEmbeddedImage(null)).toBeNull();
+  });
+});
 
 describe("reserved positions", () => {
   it("anything starting with __ is reserved", () => {

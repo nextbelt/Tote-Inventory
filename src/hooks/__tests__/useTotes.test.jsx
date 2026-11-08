@@ -62,6 +62,46 @@ describe("useTotes: recently deleted", () => {
     expect(JSON.parse(localStorage.getItem(STORE))).toHaveLength(1);
   });
 
+  it("Undo keeps +/- taps that were still staged when the tote was deleted", async () => {
+    // DetailPage.handleDelete puts staged taps into the snapshot and drops
+    // them from its own queue, so they only survive through this path.
+    const { result } = await mount();
+    const snapshot = {
+      name: "Camping Gear",
+      position: "B3",
+      items: [{ id: "i1", name: "Lantern", qty: 3 }], // stored qty is 2
+    };
+    await act(() => result.current.deleteTote(1));
+    let restored;
+    await act(async () => {
+      restored = await result.current.restoreTote(snapshot);
+    });
+    expect(restored.id).toBe(1);
+    expect(restored.created_at).toBe(T0);
+    expect(restored.items).toEqual([{ id: "i1", name: "Lantern", qty: 3 }]);
+    const stored = JSON.parse(localStorage.getItem(STORE));
+    expect(stored).toHaveLength(1);
+    expect(stored[0].items[0].qty).toBe(3);
+    expect(result.current.totes[0].items[0].qty).toBe(3);
+  });
+
+  it("Undo never resurrects an item that was removed from the stored tote meanwhile", async () => {
+    const { result } = await mount();
+    await act(() => result.current.deleteTote(1));
+    const snapshot = {
+      id: 1,
+      name: "Camping Gear",
+      position: "B3",
+      items: [{ id: "i1", name: "Lantern", qty: 2 }, { id: "ghost", name: "Gone", qty: 1 }],
+    };
+    let restored;
+    await act(async () => {
+      restored = await result.current.restoreTote(snapshot);
+    });
+    expect(restored.items.map((i) => i.id)).toEqual(["i1"]);
+    expect(restored.updated_at).toBeDefined();
+  });
+
   it("an id-less snapshot (today's DetailPage shape) still restores the just-deleted tombstone", async () => {
     const { result } = await mount();
     await act(() => result.current.deleteTote(1));

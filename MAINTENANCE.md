@@ -85,12 +85,108 @@ WHERE proname = 'swap_tote_positions';
 ```
 
 About the `UNIQUE(position)` notice: the script adds the unique constraint
-from the section above automatically, but only if there are no hidden
-duplicate rows left. If it prints *"Skipped UNIQUE(position): N spot(s)
-still have duplicate rows"*, open the app → **Tidy-up available** →
-**Remove hidden duplicates**, then run the same script again. Everything
-else (tags, notes, swap) is already in place after the first run.
+from the section above automatically, but only if no position is
+duplicated. It lists the duplicated positions, and there are two kinds:
+
+- *"these spots still have duplicate rows: A2 (12 rows), …"* — real totes.
+  Open the app → **Tidy-up available** → **Remove hidden duplicates**, then
+  run the same script again.
+- *"these hidden app rows are duplicated: \_\_config\_\_ (2 rows), …"* —
+  app-internal rows (positions starting with `__`). Tidy Up never touches
+  them; run the **Merge duplicate hidden rows** snippet below, then run the
+  script again.
+
+Everything else (tags, notes, swap) is already in place after the first
+run.
 
 Recently deleted totes and removed items need **no** database change: they
 live in hidden rows of the same table (positions starting with `__`) and
 are cleared automatically after 30 days.
+
+### Merge duplicate hidden rows (only if the notice asks for it)
+
+Two hidden rows with the same position can exist on the original live table
+(no unique constraint yet), e.g. when both phones saved the shelf layout at
+the same moment, or both removed an item before the removed-items bin row
+existed. The app already copes (it reads the newest `__config__` row and
+every `__removed_items__` row), but the unique constraint cannot be added
+until they are merged. This snippet keeps the newest row per hidden
+position — the one the app shows — after first folding every
+removed-items entry into that newest bin row, so no removed item is lost.
+It never touches real totes. Run it in the SQL Editor as one block:
+
+```sql
+BEGIN;
+
+-- 1. Fold all removed-items entries into the newest bin row (deduped by
+--    entry id, newest first). No-op when there is only one bin row.
+WITH bins AS (
+  SELECT id, items,
+         row_number() OVER (ORDER BY updated_at DESC NULLS LAST, id DESC) AS rn
+  FROM public.totes
+  WHERE position = '__removed_items__'
+),
+entries AS (
+  SELECT DISTINCT ON (e->>'id') e
+  FROM bins,
+       jsonb_array_elements(
+         CASE WHEN jsonb_typeof(bins.items) = 'array' THEN bins.items
+              ELSE '[]'::jsonb END
+       ) AS e
+  WHERE e->>'id' IS NOT NULL
+  ORDER BY e->>'id', bins.rn
+),
+merged AS (
+  SELECT jsonb_agg(e ORDER BY e->>'removedAt' DESC) AS items FROM entries
+)
+UPDATE public.totes t
+SET items      = COALESCE((SELECT items FROM merged), '[]'::jsonb),
+    updated_at = now()
+FROM bins
+WHERE t.id = bins.id
+  AND bins.rn = 1
+  AND (SELECT count(*) FROM bins) > 1;
+
+-- 2. Delete every older duplicate of each hidden "__" position.
+DELETE FROM public.totes t
+USING (
+  SELECT id,
+         row_number() OVER (
+           PARTITION BY position
+           ORDER BY updated_at DESC NULLS LAST, id DESC
+         ) AS rn
+  FROM public.totes
+  WHERE left(position, 2) = '__'
+) d
+WHERE t.id = d.id
+  AND d.rn > 1;
+
+COMMIT;
+
+-- Verify (expect 0 rows):
+SELECT position, count(*)
+FROM public.totes
+WHERE left(position, 2) = '__'
+GROUP BY position
+HAVING count(*) > 1;
+```
+
+Then run the one-time setup script again so it adds `UNIQUE(position)`.
+
+## Deploying the "Recently deleted" release
+
+From this version on, deleting a tote no longer removes its row: it moves it
+to a hidden position `__deleted__:<spot>:<id>` for 30 days, and removed
+items are kept in a hidden `__removed_items__` row. Older app versions only
+hide the `__config__` row, so a phone still running the previous build in
+the background would show those rows as odd totes (and could delete or move
+them). Deploy procedure:
+
+1. Deploy the new build.
+2. Right away, on **both** phones: force-quit the Home Screen app (swipe it
+   away in the app switcher) and reopen it, so each loads the new build.
+3. Only then delete or remove anything.
+
+Until step 2 is done on a phone, do not delete totes or items from the
+other one. (The build in `dist/` is served network-first, but iPhone keeps
+the old JavaScript in memory until the app is force-quit.)

@@ -7,7 +7,7 @@
 // Reserved "__" rows (layout settings, the removed-items bin, deleted-tote
 // tombstones) are never legacy problems and are skipped by every detector.
 
-import { isReservedPosition } from "./reservedRows";
+import { REMOVED_ITEMS_POSITION, isReservedPosition } from "./reservedRows";
 
 const realTotes = (totes) =>
   (Array.isArray(totes) ? totes : []).filter(
@@ -61,22 +61,27 @@ export function embeddedPhotoBytes(totes) {
   );
 }
 
+const isDataUri = (v) => typeof v === "string" && v.startsWith("data:");
+const stripItem = (item) =>
+  item && typeof item === "object" && isDataUri(item.image) ? { ...item, image: null } : item;
+// Removed-items bin entries nest the item one level down ({ item: {...} })
+const stripEntry = (entry) =>
+  entry && typeof entry === "object" && isDataUri(entry.item?.image)
+    ? { ...entry, item: { ...entry.item, image: null } }
+    : entry;
+
 /** Replace data-URI images with null for the offline cache (display-only
- *  mirror; a multi-MB row would overflow the localStorage quota). */
+ *  mirror; a multi-MB row would overflow the localStorage quota). Covers
+ *  both tote items and the removed-items bin's nested `entry.item`. */
 export function stripForCache(totes) {
   return totes.map((tote) => {
     const items = Array.isArray(tote.items) ? tote.items : [];
-    if (!items.some((i) => typeof i.image === "string" && i.image.startsWith("data:"))) {
-      return tote;
-    }
-    return {
-      ...tote,
-      items: items.map((item) =>
-        typeof item.image === "string" && item.image.startsWith("data:")
-          ? { ...item, image: null }
-          : item
-      ),
-    };
+    const strip =
+      tote.position === REMOVED_ITEMS_POSITION
+        ? (e) => stripItem(stripEntry(e))
+        : stripItem;
+    const next = items.map(strip);
+    return next.some((it, i) => it !== items[i]) ? { ...tote, items: next } : tote;
   });
 }
 
