@@ -529,7 +529,12 @@ describe("DetailPage keeps local edits as operations on top of the live store", 
       return saved;
     });
     ext.set((s) => ({ ...s, totes: rows(), totesByPosition: { B3: rows()[0], C4: rows()[1] } }));
-    return { dbs };
+    /** Realtime refresh: the other phone changed the SOURCE tote. */
+    const otherPhone = (nextSourceItems) => {
+      dbs[1].items = nextSourceItems;
+      act(() => ext.set((s) => ({ ...s, totes: rows() })));
+    };
+    return { dbs, otherPhone };
   }
 
   async function moveLanternToPaint(user) {
@@ -571,11 +576,58 @@ describe("DetailPage keeps local edits as operations on top of the live store", 
     expect(dbs[1].items).toEqual([]);
   });
 
-  it("when the add to the destination fails nothing changes here and the service error is shown", async () => {
-    const { dbs } = setupTwoTotes([lantern]);
+  it("moves the item AS IT IS NOW, not the snapshot the sheet opened on — a count change from the other phone travels with it", async () => {
+    const { dbs, otherPhone } = setupTwoTotes([lantern, rope]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Edit Lantern" }));
+    expect(screen.getByLabelText("Count")).toHaveValue(2);
+    // The other phone renames it and uses one while the sheet is open
+    otherPhone([{ ...lantern, name: "Lamp", qty: 1 }, rope]);
+    await user.click(screen.getByRole("button", { name: /Move to another tote/ }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: /Paint/ }));
+
+    await waitFor(() => expect(updateItems).toHaveBeenCalledTimes(2));
+    expect(dbs[2].items).toEqual([{ ...lantern, name: "Lamp", qty: 1 }]); // their edit kept
+    expect(dbs[1].items).toEqual([rope]);
+    expect(toastMock.show).toHaveBeenCalledWith("Moved “Lamp” to “Paint”", expect.objectContaining({ actionLabel: "Undo" }));
+
+    // Undo puts back the copy that actually moved
+    const [, opts] = toastMock.show.mock.calls.at(-1);
+    await act(async () => {
+      await opts.onAction();
+    });
+    expect(dbs[1].items).toEqual([{ ...lantern, name: "Lamp", qty: 1 }, rope]);
+    expect(dbs[2].items).toEqual([]);
+  });
+
+  it("does not revive an item the other phone removed while the sheet or picker was open", async () => {
+    const { dbs, otherPhone } = setupTwoTotes([lantern, rope]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Edit Lantern" }));
+    await user.click(screen.getByRole("button", { name: /Move to another tote/ }));
+    otherPhone([rope]); // they removed the lantern meanwhile
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: /Paint/ }));
+
+    await waitFor(() =>
+      expect(toastMock.error).toHaveBeenCalledWith(expect.stringMatching(/“Lantern” was removed on the other phone/))
+    );
+    expect(updateItems).not.toHaveBeenCalled(); // nothing written anywhere
+    expect(dbs[2].items).toEqual([]);
+    expect(dbs[1].items).toEqual([rope]);
+    expect(toastMock.show).not.toHaveBeenCalled(); // no bogus "Moved" + Undo
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("hides the row here while the add to the destination is still pending, so nothing can be done to the copy about to be removed", async () => {
+    const { dbs } = setupTwoTotes([lantern, rope]);
     const real = updateItems.getMockImplementation();
+    let finishAdd;
     updateItems.mockImplementation(async (id, op) => {
-      if (id === 2) throw new Error("Couldn't save your changes. Please try again.");
+      if (id === 2) await new Promise((resolve) => (finishAdd = resolve));
       return real(id, op);
     });
     const user = userEvent.setup();
@@ -583,10 +635,52 @@ describe("DetailPage keeps local edits as operations on top of the live store", 
 
     await moveLanternToPaint(user);
 
-    await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith("Couldn't save your changes. Please try again."));
+    // Step 1 is in flight: the row is already gone from this list
+    await waitFor(() => expect(screen.queryByText("Lantern")).not.toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Add one Lantern" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit Lantern" })).not.toBeInTheDocument();
+    expect(screen.getByText("Rope")).toBeInTheDocument();
+    expect(screen.getByText("Items (1)")).toBeInTheDocument();
     expect(updateItems).toHaveBeenCalledTimes(1);
+    expect(dbs[1].items).toEqual([lantern, rope]); // not removed yet — only hidden
+
+    await act(async () => {
+      finishAdd();
+    });
+    await waitFor(() => expect(updateItems).toHaveBeenCalledTimes(2));
+    expect(dbs[2].items).toEqual([lantern]);
+    expect(dbs[1].items).toEqual([rope]);
+    // …and it never flickered back: still hidden once the remove has landed
+    expect(screen.queryByText("Lantern")).not.toBeInTheDocument();
+    expect(toastMock.show).toHaveBeenCalledWith("Moved “Lantern” to “Paint”", expect.objectContaining({ actionLabel: "Undo" }));
+  });
+
+  it("when the add to the destination fails the row comes straight back here and the service error is shown", async () => {
+    const { dbs } = setupTwoTotes([lantern]);
+    const real = updateItems.getMockImplementation();
+    let failAdd;
+    updateItems.mockImplementation(async (id, op) => {
+      if (id === 2) {
+        await new Promise((_, reject) => (failAdd = reject));
+      }
+      return real(id, op);
+    });
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await moveLanternToPaint(user);
+    await waitFor(() => expect(screen.queryByText("Lantern")).not.toBeInTheDocument()); // hidden while pending
+
+    await act(async () => {
+      failAdd(new Error("Couldn't save your changes. Please try again."));
+    });
+
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith("Couldn't save your changes. Please try again."));
+    expect(updateItems).toHaveBeenCalledTimes(1); // no remove attempted
     expect(dbs[1].items).toEqual([lantern]);
-    expect(screen.getByText("Lantern")).toBeInTheDocument();
+    expect(dbs[2].items).toEqual([]);
+    expect(await screen.findByText("Lantern")).toBeInTheDocument(); // overlay dropped at once
+    expect(screen.getByRole("button", { name: "Add one Lantern" })).toBeInTheDocument();
     expect(toastMock.show).not.toHaveBeenCalled();
   });
 

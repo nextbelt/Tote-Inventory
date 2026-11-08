@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ItemEditSheet from "../ItemEditSheet";
@@ -150,6 +150,39 @@ describe("ItemEditSheet", () => {
 
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(onSave).toHaveBeenCalledWith({ image: "https://cdn/new.jpg" });
+  });
+
+  it("Enter while a photo is still uploading does not save (same guard as the disabled Save button)", async () => {
+    let finishUpload;
+    upload.mockImplementation(() => new Promise((resolve) => (finishUpload = resolve)));
+    const { onSave } = setup();
+    const user = userEvent.setup();
+
+    await user.upload(screen.getByText("Replace photo").closest("label").querySelector("input"), new File(["x"], "p.jpg", { type: "image/jpeg" }));
+    expect(await screen.findByText("Uploading…")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+
+    await user.type(screen.getByLabelText("Name"), " big{Enter}");
+    await user.type(screen.getByLabelText("Count"), "{Enter}");
+    expect(onSave).not.toHaveBeenCalled();
+
+    // Once the upload lands, Enter saves — with the NEW photo
+    await act(async () => {
+      finishUpload("https://cdn/new.jpg");
+    });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save" })).toBeEnabled());
+    await user.type(screen.getByLabelText("Name"), "{Enter}");
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave).toHaveBeenCalledWith({ name: "Lantern big", image: "https://cdn/new.jpg" });
+  });
+
+  it("Enter mid-composition (IME) does not save", async () => {
+    const { onSave } = setup();
+    const input = screen.getByLabelText("Name");
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    expect(onSave).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onSave).toHaveBeenCalledTimes(1);
   });
 
   it("refuses a non-image file without uploading", async () => {

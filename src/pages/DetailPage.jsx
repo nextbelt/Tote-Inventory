@@ -135,11 +135,15 @@ export default function DetailPage({
    * Save one item operation; it stays visible while in flight. Resolves to
    * the saved tote, or null when the save failed (the user has been told —
    * with `onError` when given, else the service's message).
+   *
+   * Pass `key` to take over an overlay entry that is already showing (see
+   * handleMoveItem); it is dropped when this save settles.
    */
   const runOp = useCallback(
-    async (apply, { onError } = {}) => {
-      const key = newId();
-      setInflight((prev) => [...prev, { key, apply }]);
+    async (apply, { onError, key = newId() } = {}) => {
+      setInflight((prev) =>
+        prev.some((op) => op.key === key) ? prev : [...prev, { key, apply }]
+      );
       try {
         return await updateItems(toteRef.current.id, apply);
       } catch (err) {
@@ -312,19 +316,39 @@ export default function DetailPage({
   /**
    * Add to the destination FIRST, then remove here — an item can never be
    * lost, only (on a failed second step) briefly be in both totes.
+   *
+   * `item` is the snapshot the sheet / picker opened on; the copy that
+   * travels is the item AS IT IS NOW, so an edit the other phone made in
+   * the meantime moves with it (and an item they removed isn't revived).
    */
   const handleMoveItem = async (item, dest) => {
     setMovingItem(null);
     const source = toteRef.current;
     const index = items.findIndex((it) => it.id === item.id);
-    const moved = { ...item };
+    if (index === -1) {
+      toast.error(
+        `“${item.name}” was removed on the other phone, so there was nothing to move.`
+      );
+      return;
+    }
+    const moved = { ...items[index] };
+    // Hide it here from the first step on: anything done to the still-visible
+    // row (a + tap, a rename, a second move) would land on the source copy
+    // and be wiped out — or duplicated — by the remove that follows.
+    const key = newId();
+    const hide = removeItemOp(moved.id);
+    setInflight((prev) => [...prev, { key, apply: hide }]);
     try {
       await updateItems(dest.id, addItem(moved));
     } catch (err) {
+      // Nothing moved — bring the row straight back
+      setInflight((prev) => prev.filter((op) => op.key !== key));
       toast.error(err.message);
       return;
     }
-    const removed = await runOp(removeItemOp(moved.id), {
+    // Same key, so the row stays hidden continuously until this settles
+    const removed = await runOp(hide, {
+      key,
       onError: () =>
         toast.error(
           `“${moved.name}” was added to “${dest.name}” but couldn't be removed from “${source.name}” — it is now in both. Please check.`
