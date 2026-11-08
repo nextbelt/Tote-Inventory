@@ -79,6 +79,7 @@ export default function DetailPage({
   const [inflight, setInflight] = useState([]);
   const stagedRef = useRef(staged);
   const saveTimerRef = useRef(null);
+  const deletingRef = useRef(false);
   const toteRef = useRef(tote);
   toteRef.current = tote;
 
@@ -124,6 +125,9 @@ export default function DetailPage({
   /** Persist the coalesced +/- taps now (no-op when nothing is staged). */
   const flushStaged = useCallback(() => {
     clearTimeout(saveTimerRef.current);
+    // While a delete is in flight, staged taps are held (see handleDelete):
+    // saving them would target a tote that is disappearing.
+    if (deletingRef.current) return Promise.resolve();
     const deltas = stagedRef.current;
     if (deltas.size === 0) return Promise.resolve();
     replaceStaged(new Map());
@@ -136,6 +140,8 @@ export default function DetailPage({
   useEffect(
     () => () => {
       clearTimeout(saveTimerRef.current);
+      // Leaving mid-delete: the Undo snapshot already carries the taps
+      if (deletingRef.current) return;
       const deltas = stagedRef.current;
       if (deltas.size === 0) return;
       stagedRef.current = new Map();
@@ -253,9 +259,11 @@ export default function DetailPage({
     const snapshot = { name: tote.name, position: tote.position, items };
     setSheet(null);
     // The snapshot already carries any staged +/- taps. Hold them while the
-    // delete is in flight so the debounce can't fire a save at a tote that
-    // is disappearing (which would show a bogus "couldn't find" error).
+    // delete is in flight — no debounce, background/pagehide flush, or new
+    // tap may save to a tote that is disappearing (which would show a bogus
+    // "couldn't find" error).
     clearTimeout(saveTimerRef.current);
+    deletingRef.current = true;
     try {
       await deleteTote(tote.id);
       // …and never let the unmount flush try to save them afterwards.
@@ -267,6 +275,7 @@ export default function DetailPage({
           restoreTote(snapshot).catch((err) => toast.error(err.message)),
       });
     } catch (err) {
+      deletingRef.current = false;
       toast.error(err.message);
       // Delete failed, so the tote is still here — save the held taps
       if (stagedRef.current.size > 0) {
