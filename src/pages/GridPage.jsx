@@ -126,12 +126,13 @@ export default function GridPage({
     if (wallId) onWallChange(wallId, position);
   };
 
-  const results = searchTerm.trim() ? searchTotes(totes, searchTerm) : null;
+  // Search what the walls show: a hidden duplicate row (only the newest one
+  // per slot is displayed) must never surface — or get highlighted — from a
+  // search result.
+  const visibleTotes = useMemo(() => Object.values(totesByPosition), [totesByPosition]);
+  const results = searchTerm.trim() ? searchTotes(visibleTotes, searchTerm) : null;
   const occupied = Object.keys(totesByPosition).length;
-  const restockCount = useMemo(
-    () => restockItems(Object.values(totesByPosition)).length,
-    [totesByPosition]
-  );
+  const restockCount = useMemo(() => restockItems(visibleTotes).length, [visibleTotes]);
   const lastUpdated = latestModified(totes);
   const sortedTotes = [...totes].sort((a, b) =>
     a.position.localeCompare(b.position, undefined, { numeric: true })

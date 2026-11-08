@@ -194,3 +194,24 @@ describe("parseItems limits and validation", () => {
     expect(result.overflow).toEqual([]);
   });
 });
+
+describe("parseItems numbers that contain a comma", () => {
+  it("keeps a comma between two digits inside the number", () => {
+    expect(pairs("1,000 screws")).toEqual([["1,000 screws", 1]]);
+    expect(pairs("1,5 m cable, tarp")).toEqual([
+      ["1,5 m cable", 1],
+      ["tarp", 1],
+    ]);
+  });
+
+  it("still splits on a comma that isn't between two digits", () => {
+    expect(pairs("tarp,2 straps")).toEqual([
+      ["tarp", 1],
+      ["straps", 2],
+    ]);
+    expect(pairs("3 screws, 2 nails")).toEqual([
+      ["screws", 3],
+      ["nails", 2],
+    ]);
+  });
+});

@@ -224,3 +224,18 @@ describe("ItemEditSheet", () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 });
+
+describe("ItemEditSheet exact count limit", () => {
+  it("refuses a count above 9,999 (the +/- row only fits four digits)", async () => {
+    const { onSave } = setup();
+    const user = userEvent.setup();
+    await user.clear(screen.getByLabelText("Count"));
+    await user.type(screen.getByLabelText("Count"), "10000{Enter}");
+    expect(screen.getByRole("alert")).toHaveTextContent("Count can be at most 9,999.");
+    expect(onSave).not.toHaveBeenCalled();
+
+    await user.clear(screen.getByLabelText("Count"));
+    await user.type(screen.getByLabelText("Count"), "9999{Enter}");
+    expect(onSave).toHaveBeenCalledWith({ qty: 9999 });
+  });
+});

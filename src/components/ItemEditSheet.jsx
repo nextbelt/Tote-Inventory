@@ -7,6 +7,9 @@ import { compressImage } from "../utils/images";
 import { itemQty } from "../utils/itemOps";
 import { validateImageFile, validateItemName } from "../utils/validation";
 
+// The +/- row has room for four digits; nobody keeps 10,000 of anything here.
+const MAX_COUNT = 9999;
+
 /**
  * Edit one item: name, exact count, photo, or move it to another tote.
  *
@@ -71,6 +74,10 @@ export default function ItemEditSheet({ item, onSave, onClose, onMove, onViewPho
     const qty = trimmedCount === "" ? NaN : Number(trimmedCount);
     if (!Number.isInteger(qty) || qty < 0) {
       setError("Count must be a whole number, 0 or more.");
+      return;
+    }
+    if (qty > MAX_COUNT) {
+      setError(`Count can be at most ${MAX_COUNT.toLocaleString("en-US")}.`);
       return;
     }
 
@@ -175,6 +182,7 @@ export default function ItemEditSheet({ item, onSave, onClose, onMove, onViewPho
           type="number"
           inputMode="numeric"
           min={0}
+          max={MAX_COUNT}
           step={1}
           aria-describedby={countHintId}
           value={count}
