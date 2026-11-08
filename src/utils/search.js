@@ -171,6 +171,13 @@ export function highlightMatches(text, query) {
  *   { type: "tote", tote, score }       – the tote name/position matched
  * Tote matches are ranked alongside item matches. A query with no letters or
  * numbers (all punctuation) matches nothing.
+ *
+ * Notes and tags match too, but only when the name did not, and they always
+ * rank below every name match. Those results carry
+ * `match: { field: "note" | "notes" | "tag", text }` (the text that matched):
+ *   item note  → { type: "item", ..., match.field "note" }
+ *   tote notes → { type: "tote", ..., match.field "notes" }
+ *   tote tag   → { type: "tote", ..., match.field "tag" }
  */
 export function searchTotes(totes, query) {
   const queryTokens = tokenize(query);
@@ -183,19 +190,146 @@ export function searchTotes(totes, query) {
       // Guard against malformed rows (a corrupt item must not crash the app)
       if (!item || typeof item !== "object") return;
       const score = scoreText(queryTokens, item.name);
-      if (score > 0) results.push({ type: "item", tote, item, score });
+      if (score > 0) {
+        results.push({ type: "item", tote, item, score, tier: 0 });
+        return;
+      }
+      const note = textOf(item.note);
+      const noteScore = note ? scoreText(queryTokens, note) : 0;
+      if (noteScore > 0) {
+        results.push({
+          type: "item",
+          tote,
+          item,
+          score: noteScore,
+          tier: 1,
+          match: { field: "note", text: note },
+        });
+      }
     });
 
     const score = scoreText(queryTokens, `${tote.name} ${tote.position}`);
-    if (score > 0) results.push({ type: "tote", tote, score });
+    if (score > 0) {
+      results.push({ type: "tote", tote, score, tier: 0 });
+      return;
+    }
+
+    // Tags: each tag on its own, so words of two different tags never combine
+    let bestTag = null;
+    let bestTagScore = 0;
+    (Array.isArray(tote.tags) ? tote.tags : []).forEach((tag) => {
+      const t = textOf(tag);
+      const s = t ? scoreText(queryTokens, t) : 0;
+      if (s > bestTagScore) {
+        bestTagScore = s;
+        bestTag = t;
+      }
+    });
+    if (bestTagScore > 0) {
+      results.push({
+        type: "tote",
+        tote,
+        score: bestTagScore,
+        tier: 1,
+        match: { field: "tag", text: bestTag },
+      });
+      return;
+    }
+    const notes = textOf(tote.notes);
+    const notesScore = notes ? scoreText(queryTokens, notes) : 0;
+    if (notesScore > 0) {
+      results.push({
+        type: "tote",
+        tote,
+        score: notesScore,
+        tier: 1,
+        match: { field: "notes", text: notes },
+      });
+    }
   });
 
   return results
     .map((r, order) => ({ r, order }))
     .sort((a, b) => {
+      if (a.r.tier !== b.r.tier) return a.r.tier - b.r.tier;
       if (b.r.score !== a.r.score) return b.r.score - a.r.score;
       if (a.r.type !== b.r.type) return a.r.type === "item" ? -1 : 1;
       return a.order - b.order;
     })
-    .map(({ r }) => r);
+    .map(({ r: { tier, ...rest } }) => rest); // eslint-disable-line no-unused-vars
+}
+
+/** The text itself when it is a string, trimmed; else "". */
+function textOf(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/**
+ * A short piece of `text` around the first word that matches the query, with
+ * an ellipsis on a cut end. Short text comes back whole.
+ */
+export function snippetAround(text, query, max = 90) {
+  const source = String(text ?? "").replace(/\s+/g, " ").trim();
+  if (source.length <= max) return source;
+  const queryTokens = tokenize(query);
+  const { words } = wordsOf(source);
+  const hit = words.find((w) => queryTokens.some((q) => wordScore(q, w.norm) > 0));
+  const anchor = hit ? hit.start : 0;
+  let from = Math.max(0, anchor - Math.floor(max / 3));
+  // Start on a word boundary rather than mid-word
+  if (from > 0) {
+    const space = source.indexOf(" ", from);
+    if (space !== -1 && space < anchor) from = space + 1;
+  }
+  const to = Math.min(source.length, from + max);
+  return `${from > 0 ? "…" : ""}${source.slice(from, to).trim()}${to < source.length ? "…" : ""}`;
+}
+
+// ---------------------------------------------------------------------------
+// "You already have one": is this item name already in another tote?
+// ---------------------------------------------------------------------------
+
+/**
+ * True when two item names are the same thing: equal ignoring case, accents,
+ * punctuation and spacing, with singular/plural treated as equal per word
+ * ("Bungee cord" = "bungee  CORDS"). Word order matters; partial names don't
+ * match ("Bungee" is not "Bungee cords").
+ */
+export function sameItemName(a, b) {
+  const ta = tokenize(a);
+  const tb = tokenize(b);
+  if (ta.length === 0 || ta.length !== tb.length) return false;
+  return ta.every((word, i) => {
+    const other = tb[i];
+    if (word === other) return true;
+    const otherStems = stems(other);
+    return stems(word).some((s) => s.length >= 2 && otherStems.includes(s));
+  });
+}
+
+/**
+ * Items elsewhere with the same name as `text`: [{ tote, item }], in tote
+ * order, at most `limit` (default 2). Reserved "__" rows, the excluded tote
+ * (compared by its original id type) and malformed items are skipped. Pass the
+ * visible totes. Text under two letters/numbers matches nothing.
+ */
+export function findSimilarItems(totes, text, { excludeToteId, limit = 2 } = {}) {
+  const key = tokenize(text).join("");
+  if (key.length < 2 || !Array.isArray(totes) || limit <= 0) return [];
+  const out = [];
+  for (const tote of totes) {
+    if (!tote || typeof tote !== "object") continue;
+    if (typeof tote.position === "string" && tote.position.startsWith("__")) continue;
+    if (excludeToteId !== undefined && excludeToteId !== null && tote.id === excludeToteId) {
+      continue;
+    }
+    for (const item of Array.isArray(tote.items) ? tote.items : []) {
+      if (!item || typeof item !== "object") continue;
+      if (sameItemName(item.name, text)) {
+        out.push({ tote, item });
+        if (out.length >= limit) return out;
+      }
+    }
+  }
+  return out;
 }

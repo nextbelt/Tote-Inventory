@@ -1,7 +1,9 @@
 import { MapPin, Package, SearchX } from "lucide-react";
 import { WALLS, describeSpot } from "../utils/constants";
 import { itemQty } from "../utils/itemOps";
-import { highlightMatches } from "../utils/search";
+import { highlightMatches, snippetAround } from "../utils/search";
+
+const MATCH_LABEL = { note: "Note", notes: "Tote note", tag: "Tag" };
 
 /** Text with the words that matched the query in bold. */
 function Highlighted({ text, query }) {
@@ -95,6 +97,20 @@ export default function SearchResults({
                   <span className="block text-sm text-gray-500 dark:text-gray-400">
                     {type === "item" ? `${tote.name} · ${path}` : path}
                   </span>
+                  {result.match && (
+                    <span
+                      className="mt-0.5 block truncate text-sm text-gray-600 dark:text-gray-300"
+                      data-testid="match-snippet"
+                    >
+                      <span className="text-gray-500 dark:text-gray-400">
+                        {MATCH_LABEL[result.match.field] || "Match"}:{" "}
+                      </span>
+                      <Highlighted
+                        text={snippetAround(result.match.text, query)}
+                        query={query}
+                      />
+                    </span>
+                  )}
                 </span>
               </button>
               <button
