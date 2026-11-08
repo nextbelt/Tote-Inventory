@@ -42,16 +42,24 @@ const PRINT_CSS = `
 `;
 
 /**
- * Printable QR labels. Shows an on-screen preview in a bottom sheet and a
+& an on-screen preview in a bottom sheet and a
  * print-only copy portaled to <body>, so @media print can hide the whole app
  * (the sheet's scroll container would otherwise clip multi-page output).
+ * Optional `positions`: the full list of grid slots, so shelf-edge labels also
+ * cover empty spots (defaults to the positions that currently hold a tote).
  */
-export default function LabelSheet({ totes, origin, describe, onClose }) {
+export default function LabelSheet({
+  totes,
+  origin,
+  describe,
+  positions,
+  onClose,
+}) {
   const [slotMode, setSlotMode] = useState(false);
 
   const labels = useMemo(
-    () => buildLabels({ totes, origin, describe, slotMode }),
-    [totes, origin, describe, slotMode]
+    () => buildLabels({ totes, origin, describe, slotMode, positions }),
+    [totes, origin, describe, slotMode, positions],
   );
 
   return (
@@ -149,7 +157,7 @@ export default function LabelSheet({ totes, origin, describe, onClose }) {
             ))}
           </div>
         </div>,
-        document.body
+        document.body,
       )}
     </>
   );
