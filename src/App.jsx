@@ -304,7 +304,7 @@ function AppShell() {
   const screenKey = `${view}:${selectedTote?.id ?? ""}:${editingTote?.id ?? ""}`;
   useLayoutEffect(() => {
     if (view !== "garage") window.scrollTo(0, 0);
-  }, [screenKey]);
+  }, [view, screenKey]);
 
   return (
     <>
