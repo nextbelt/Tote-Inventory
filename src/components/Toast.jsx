@@ -11,6 +11,23 @@ const ToastContext = createContext(null);
 
 let nextId = 1;
 
+// How many toasts to show at once. Only PLAIN toasts are ever dropped to
+// make room — a toast with an action (Undo) stays until its timer ends,
+// otherwise removing four items quickly would silently lose the first Undo.
+const MAX_VISIBLE = 3;
+
+function trimToasts(toasts) {
+  const next = [...toasts];
+  for (let i = 0; next.length > MAX_VISIBLE && i < next.length; ) {
+    if (next[i].actionLabel) {
+      i += 1; // keep: live Undo
+    } else {
+      next.splice(i, 1); // drop the oldest plain toast first
+    }
+  }
+  return next;
+}
+
 /**
  * Lightweight snackbar system with optional Undo-style actions.
  *   const toast = useToast();
@@ -31,7 +48,9 @@ export function ToastProvider({ children }) {
     (message, { actionLabel, onAction, tone = "info", duration } = {}) => {
       const id = nextId++;
       const ms = duration ?? (actionLabel ? 6000 : 3500);
-      setToasts((prev) => [...prev.slice(-2), { id, message, actionLabel, onAction, tone }]);
+      setToasts((prev) =>
+        trimToasts([...prev, { id, message, actionLabel, onAction, tone }])
+      );
       timersRef.current[id] = setTimeout(() => dismiss(id), ms);
       return id;
     },

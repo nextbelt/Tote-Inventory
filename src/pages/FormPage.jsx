@@ -5,6 +5,7 @@ import { useTotes } from "../hooks/useTotes";
 import { toteService } from "../services/toteService";
 import { describePosition } from "../utils/constants";
 import { compressImage } from "../utils/images";
+import { diffItemsOp } from "../utils/itemOps";
 import {
   validateImageFile,
   validateItemName,
@@ -17,7 +18,7 @@ const newId = () =>
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 export default function FormPage({ editTote, position, onBack, onSaved }) {
-  const { saveTote, totesByPosition } = useTotes();
+  const { saveTote, updateTote, updateItems, totesByPosition } = useTotes();
   const toast = useToast();
 
   const [toteName, setToteName] = useState(editTote?.name || "");
@@ -96,15 +97,24 @@ export default function FormPage({ editTote, position, onBack, onSaved }) {
     setError(null);
     setSaving(true);
     try {
-      const toteData = {
-        ...(isEditing
-          ? { id: editTote.id, created_at: editTote.created_at }
-          : {}),
-        name: toteName.trim(),
-        position,
-        items,
-      };
-      await saveTote(toteData, !isEditing);
+      if (isEditing) {
+        // Patch only what actually changed. Never write the items snapshot
+        // this form opened with — the other phone may have edited them.
+        const fields = {};
+        const name = toteName.trim();
+        if (name !== (editTote.name || "").trim()) fields.name = name;
+        if (position !== editTote.position) fields.position = position;
+        if (Object.keys(fields).length > 0) {
+          await updateTote(editTote.id, fields);
+        }
+        const itemsOp = diffItemsOp(editTote.items, items);
+        if (itemsOp) await updateItems(editTote.id, itemsOp);
+      } else {
+        await saveTote(
+          { name: toteName.trim(), position, items },
+          true
+        );
+      }
       onSaved();
     } catch (err) {
       setError(err.message);

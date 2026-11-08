@@ -76,6 +76,15 @@ export function ToteProvider({ children }) {
     return savedTote;
   }, []);
 
+  /** Change one tote's items by applying a pure operation (utils/itemOps)
+   *  to the freshest stored copy — safe against the other phone editing the
+   *  same tote at the same time. */
+  const updateItems = useCallback(async (id, mutate) => {
+    const savedTote = await toteService.updateItems(id, mutate);
+    setTotes((prev) => prev.map((t) => (t.id === savedTote.id ? savedTote : t)));
+    return savedTote;
+  }, []);
+
   /** Move a tote to a new (empty) position — patches position only, so a
    *  concurrent item edit can never be clobbered or reverted. */
   const moveTote = useCallback(
@@ -137,6 +146,7 @@ export function ToteProvider({ children }) {
       loadData,
       saveTote,
       updateTote,
+      updateItems,
       deleteTote,
       moveTote,
       restoreTote,
@@ -154,6 +164,7 @@ export function ToteProvider({ children }) {
       loadData,
       saveTote,
       updateTote,
+      updateItems,
       deleteTote,
       moveTote,
       restoreTote,

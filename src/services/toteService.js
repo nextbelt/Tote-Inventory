@@ -1,5 +1,6 @@
 import { supabase } from "../lib/supabase";
 import { compressImage } from "../utils/images";
+import { composeOps, normalizeItems, setItemImage } from "../utils/itemOps";
 import { dataUriToBlob, findEmbeddedPhotos, stripForCache } from "../utils/maintenance";
 
 // ---------------------------------------------------------------------------
@@ -81,8 +82,30 @@ function enqueueWrite(key, task) {
   return next;
 }
 
+// Compare-and-swap item writes re-read and retry this many times when the
+// other phone wrote first (each retry re-applies the same idempotent op).
+const CAS_ATTEMPTS = 3;
+
+/**
+ * Fresh updated_at that is strictly later than the one we read. Guards the
+ * compare-and-swap against clock skew between phones: if the stamp didn't
+ * move, the other device's stale match could still succeed and clobber us.
+ */
+function nextStamp(previous) {
+  const now = Date.now();
+  const prev = previous ? new Date(previous).getTime() : NaN;
+  const stamp = Number.isFinite(prev) && prev >= now ? prev + 1 : now;
+  return new Date(stamp).toISOString();
+}
+
+/** An error whose message is already written for the user — never rewrapped. */
+class UserFacingError extends Error {}
+
+const NOT_FOUND_MESSAGE = "Couldn't find that tote to update.";
+
 /** Convert Supabase/network failures into messages a person can act on. */
 function friendlyError(err, action) {
+  if (err instanceof UserFacingError) return err;
   if (err?.code === "23505") {
     return new Error(
       "That spot already has a tote. Pick a different position."
@@ -287,10 +310,89 @@ export const toteService = {
   },
 
   /**
+   * Change a tote's items by applying a pure operation (see utils/itemOps)
+   * to the FRESHEST stored copy — never by writing a snapshot. Two phones
+   * editing the same tote therefore both keep their changes.
+   *
+   * Cloud mode is a compare-and-swap: read items + updated_at, apply the op,
+   * then UPDATE only if updated_at still matches what was read. If another
+   * device won the race no row comes back, so we re-read and re-apply (the
+   * ops are idempotent), giving up after a few attempts.
+   *
+   * @param {number|string} id
+   * @param {(items: object[]) => object[]} mutate  pure, idempotent
+   * @returns the saved row
+   * @throws {Error} friendly message on failure (never shadow-saves)
+   */
+  async updateItems(id, mutate) {
+    if (typeof mutate !== "function") {
+      throw new TypeError("updateItems needs an operation function");
+    }
+
+    return enqueueWrite(id, async () => {
+      // ---------- local mode ----------
+      if (!supabase) {
+        const totes = getLocalTotes();
+        const idx = totes.findIndex((t) => t.id === id);
+        if (idx < 0) throw new UserFacingError(NOT_FOUND_MESSAGE);
+        const current = Array.isArray(totes[idx].items) ? totes[idx].items : [];
+        totes[idx] = {
+          ...totes[idx],
+          items: normalizeItems(mutate(current)),
+          updated_at: new Date().toISOString(),
+        };
+        saveLocalTotes(totes);
+        return totes[idx];
+      }
+
+      // ---------- cloud mode (compare-and-swap) ----------
+      try {
+        for (let attempt = 0; attempt < CAS_ATTEMPTS; attempt++) {
+          const { data: row, error: readErr } = await supabase
+            .from("totes")
+            .select("items, updated_at")
+            .eq("id", id)
+            .maybeSingle();
+          if (readErr) throw readErr;
+          if (!row) throw new UserFacingError(NOT_FOUND_MESSAGE);
+
+          const current = Array.isArray(row.items) ? row.items : [];
+          const patch = {
+            items: normalizeItems(mutate(current)),
+            updated_at: nextStamp(row.updated_at),
+          };
+
+          let query = supabase.from("totes").update(patch).eq("id", id);
+          // Only land if nobody else wrote since we read
+          query =
+            row.updated_at === null || row.updated_at === undefined
+              ? query.is("updated_at", null)
+              : query.eq("updated_at", row.updated_at);
+          const { data, error } = await query.select();
+          if (error) throw error;
+          if (Array.isArray(data) && data.length > 0) return data[0];
+          // Lost the race — loop re-reads the other phone's copy and
+          // re-applies the same op on top of it.
+        }
+        throw new UserFacingError(
+          "Someone else is editing this tote right now. Please try again in a moment."
+        );
+      } catch (err) {
+        throw friendlyError(err, "save your changes");
+      }
+    });
+  },
+
+  /**
    * Create or update a tote.
    * @param {object}  tote   – tote data (must include `id` for updates)
    * @param {boolean} isNew  – true → INSERT, false → UPDATE
    * @throws {Error} in cloud mode when the write fails (never shadow-saves)
+   *
+   * NOTE: the update path (isNew = false) writes name, position AND the
+   * whole items array from the caller's copy. App code no longer uses it —
+   * prefer updateTote() for name/position and updateItems() for items so a
+   * stale snapshot can never erase the other phone's edits.
    */
   async saveTote(tote, isNew = false) {
     if (!isNew) {
@@ -425,12 +527,9 @@ export const toteService = {
     });
 
     for (const { tote, itemIds } of byTote.values()) {
-      const items = [];
+      const ops = [];
       for (const item of tote.items) {
-        if (!itemIds.has(item.id)) {
-          items.push(item);
-          continue;
-        }
+        if (!itemIds.has(item.id)) continue;
         const blob = dataUriToBlob(item.image);
         const file = new File([blob], "photo.jpg", {
           type: blob.type || "image/jpeg",
@@ -440,10 +539,14 @@ export const toteService = {
           compressed,
           `migrated-${tote.id}-${item.id}-${Date.now()}.jpg`
         );
-        items.push({ ...item, image: url });
+        ops.push(setItemImage(item.id, url));
         migrated += 1;
       }
-      await this.saveTote({ ...tote, items }, false);
+      // Item-op path: only the photo of these specific items changes, so a
+      // rename/move or item edit made meanwhile on the other phone survives.
+      if (ops.length > 0) {
+        await this.updateItems(tote.id, composeOps(...ops));
+      }
     }
     return migrated;
   },
