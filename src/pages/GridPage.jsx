@@ -61,11 +61,13 @@ export default function GridPage({
 
   // Back from a tote: put the page back where it was (results list, tote
   // list, or garage). Runs once, as soon as there is content to scroll.
+  // Always scrolls — including to 0 — because the browser keeps whatever
+  // offset the tote page left behind (a highlighted item scrolls it).
   const scrollRestoredRef = useRef(false);
   useLayoutEffect(() => {
     if (scrollRestoredRef.current || loading) return;
     scrollRestoredRef.current = true;
-    if (initialScrollY > 0) window.scrollTo(0, initialScrollY);
+    window.scrollTo(0, initialScrollY || 0);
   }, [loading, initialScrollY]);
 
   // Whenever the carousel (re)appears, land on the active wall instantly
@@ -149,11 +151,7 @@ export default function GridPage({
         <div className="mx-auto max-w-3xl px-4 py-3">
           <div className="mb-2 flex items-center justify-between gap-2">
             <h1 className="apple-title flex min-w-0 items-center gap-2 whitespace-nowrap text-xl sm:text-2xl">
-              <span
-                className={`h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-r from-blue-500 to-indigo-500 ${
-                  restockCount > 0 ? "hidden min-[400px]:flex" : "flex"
-                }`}
-              >
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-r from-blue-500 to-indigo-500">
                 <Package className="h-5 w-5 text-white" aria-hidden="true" />
               </span>
               <span className="truncate">Garage Totes</span>
@@ -162,20 +160,6 @@ export default function GridPage({
               <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-300">
                 {occupied}/{totalPositions} spots
               </span>
-              {restockCount > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setRestockOpen(true)}
-                  aria-label={`Restock, ${restockCount} ${restockCount === 1 ? "item" : "items"}`}
-                  className="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center gap-1 rounded-xl px-1 text-xs font-semibold text-amber-700 dark:text-amber-300"
-                >
-                  <PackageX className="h-4 w-4" aria-hidden="true" />
-                  <span className="hidden sm:inline">Restock</span>
-                  <span className="rounded-full bg-amber-100 px-1.5 py-0.5 dark:bg-amber-950">
-                    {restockCount}
-                  </span>
-                </button>
-              )}
               <ThemeToggle />
               <button
                 type="button"
@@ -192,12 +176,37 @@ export default function GridPage({
             </div>
           </div>
           <SearchBar value={searchTerm} onChange={onSearchChange} />
-          {lastUpdated && (
-            <p className="mt-1.5 flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
-              <Clock className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Last updated</span>
-              <RelativeTime date={lastUpdated} />
-            </p>
+          {/* Status line. The Restock button lives here, not on the title
+              row: with the spots badge, theme and refresh buttons there is
+              no room for a readable "Restock N" label at 375–430 px. */}
+          {(lastUpdated || restockCount > 0) && (
+            <div className="mt-1.5 flex min-h-[24px] items-center justify-between gap-2">
+              {lastUpdated ? (
+                <p className="flex min-w-0 items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+                  <Clock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <span>Last updated</span>
+                  <RelativeTime date={lastUpdated} />
+                </p>
+              ) : (
+                <span />
+              )}
+              {/* 44 px tap target drawn as a slim pill: the negative margin
+                  keeps the sticky header from growing when something is out */}
+              {restockCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setRestockOpen(true)}
+                  aria-label={`Restock, ${restockCount} ${restockCount === 1 ? "item" : "items"}`}
+                  className="-my-2.5 flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-xl px-2 text-xs font-semibold text-amber-700 dark:text-amber-300"
+                >
+                  <PackageX className="h-4 w-4" aria-hidden="true" />
+                  <span>Restock</span>
+                  <span className="rounded-full bg-amber-100 px-1.5 py-0.5 dark:bg-amber-950">
+                    {restockCount}
+                  </span>
+                </button>
+              )}
+            </div>
           )}
         </div>
       </header>

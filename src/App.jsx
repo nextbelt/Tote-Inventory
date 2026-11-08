@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ToastProvider } from "./components/Toast";
 import { ToteProvider } from "./hooks/useTotes";
@@ -77,6 +77,14 @@ export default function ToteInventoryApp() {
   };
 
   const clearHighlight = useCallback(() => setHighlightPosition(null), []);
+
+  // A tote or form page starts at the top: the browser would otherwise keep
+  // the grid's scroll offset (a scrolled results list opened the tote). The
+  // grid restores its own place on the way back; a highlighted item scrolls
+  // the tote page to itself afterwards.
+  useLayoutEffect(() => {
+    if (view !== "garage") window.scrollTo(0, 0);
+  }, [view]);
 
   return (
     <ErrorBoundary>

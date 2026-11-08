@@ -172,7 +172,8 @@ describe("App", () => {
       await screen.findByRole("list", { name: "Search results" });
       expect(scrollTo).toHaveBeenLastCalledWith(0, 600);
 
-      // Clear the search, scroll to the top, start adding a tote, then Back
+      // Clear the search, scroll to the top, start adding a tote, then Back:
+      // lands at the top again, not at the 600 remembered from the tote
       await user.clear(screen.getByLabelText("Search totes and items"));
       scrollTo.mockClear();
       window.scrollY = 0;
@@ -182,7 +183,8 @@ describe("App", () => {
       await screen.findByRole("heading", { name: "New Tote" });
       await user.click(screen.getByRole("button", { name: "Back" }));
       await screen.findByLabelText(/^B3: Camping Gear/);
-      expect(scrollTo).not.toHaveBeenCalled();
+      expect(scrollTo).toHaveBeenLastCalledWith(0, 0);
+      expect(scrollTo).not.toHaveBeenCalledWith(0, 600);
 
       // Same again from a non-zero position: lands where the user left
       window.scrollY = 250;
@@ -194,6 +196,76 @@ describe("App", () => {
       await user.click(screen.getByRole("button", { name: "Back" }));
       await screen.findByLabelText(/^B3: Camping Gear/);
       expect(scrollTo).toHaveBeenLastCalledWith(0, 250);
+    } finally {
+      window.scrollTo = originalScrollTo;
+      window.scrollY = 0;
+    }
+  });
+
+  it("comes back to the top of a grid that was at the top, even after the tote page was scrolled", async () => {
+    seedTotes();
+    const user = userEvent.setup();
+    const scrollTo = vi.fn();
+    const originalScrollTo = window.scrollTo;
+    window.scrollTo = scrollTo;
+    try {
+      render(<App />);
+      await screen.findByLabelText(/^B3: Camping Gear/);
+      await user.type(screen.getByLabelText("Search totes and items"), "lantern");
+
+      // Grid at the very top; open a result (a highlighted item scrolls the
+      // tote page down), then Back
+      window.scrollY = 0;
+      await user.click(await screen.findByRole("button", { name: /Lantern/ }));
+      await screen.findByRole("heading", { name: "Camping Gear" });
+      scrollTo.mockClear();
+      window.scrollY = 400;
+
+      await user.click(screen.getByRole("button", { name: "Garage" }));
+      await screen.findByRole("list", { name: "Search results" });
+      // Restored to 0 explicitly — the browser would otherwise keep ~400
+      expect(scrollTo).toHaveBeenLastCalledWith(0, 0);
+    } finally {
+      window.scrollTo = originalScrollTo;
+      window.scrollY = 0;
+    }
+  });
+
+  it("opens a tote page and the add-tote form at the top, however far the grid was scrolled", async () => {
+    seedTotes();
+    const user = userEvent.setup();
+    const scrollTo = vi.fn();
+    const originalScrollTo = window.scrollTo;
+    window.scrollTo = scrollTo;
+    try {
+      render(<App />);
+      await screen.findByLabelText(/^B3: Camping Gear/);
+      await user.click(screen.getByRole("button", { name: "All totes" }));
+      const list = await screen.findByRole("list", { name: "All totes" });
+
+      // Deep in the All totes list; open a tote (no highlight)
+      window.scrollY = 800;
+      scrollTo.mockClear();
+      await user.click(within(list).getByRole("button", { name: /Holiday Lights/ }));
+      await screen.findByRole("heading", { name: "Holiday Lights" });
+      expect(scrollTo).toHaveBeenCalledWith(0, 0);
+
+      // Back lands where the list was
+      window.scrollY = 0;
+      scrollTo.mockClear();
+      await user.click(screen.getByRole("button", { name: "Garage" }));
+      await screen.findByRole("list", { name: "All totes" });
+      expect(scrollTo).toHaveBeenLastCalledWith(0, 800);
+
+      // Same for the add-tote form
+      await user.click(screen.getByRole("button", { name: "Garage" }));
+      window.scrollY = 300;
+      scrollTo.mockClear();
+      await user.click(
+        await screen.findByRole("button", { name: "A1: empty slot, add a tote" })
+      );
+      await screen.findByRole("heading", { name: "New Tote" });
+      expect(scrollTo).toHaveBeenCalledWith(0, 0);
     } finally {
       window.scrollTo = originalScrollTo;
       window.scrollY = 0;

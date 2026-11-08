@@ -434,22 +434,124 @@ describe("DetailPage keeps local edits as operations on top of the live store", 
     await waitFor(() => expect(db.items[0].qty).toBe(3));
   });
 
-  it("a staged tap made while the sheet is open is still flushed before the save", async () => {
-    const { db } = setup([lantern]);
+  it("an exact count DROPS a staged tap for that item instead of landing it (the count shown already included it)", async () => {
+    const { db } = setup([lantern, rope]);
     const user = userEvent.setup();
     render(<DetailPage {...props} />);
 
     await user.click(screen.getByRole("button", { name: "Edit Lantern" }));
-    // Not reachable through the modal, but guard the ordering regardless
+    // Not reachable through the modal, but guard the ordering regardless:
+    // a tap on Lantern (being edited) and one on Rope (not)
     await user.click(screen.getByRole("button", { name: "Add one Lantern" }));
+    await user.click(screen.getByRole("button", { name: "Add one Rope" }));
     const dialog = screen.getByRole("dialog", { name: "Edit item" });
     await user.clear(within(dialog).getByLabelText("Count"));
     await user.type(within(dialog).getByLabelText("Count"), "10");
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
 
+    // Rope's tap is flushed first, then the absolute set; Lantern's tap is
+    // dropped, never saved — so it can't land after the set either
     await waitFor(() => expect(updateItems).toHaveBeenCalledTimes(2));
-    // adjust(+1) first, then the absolute set — the set wins
-    expect(db.items[0].qty).toBe(10);
+    expect(updateItems.mock.calls[0][1]([lantern, rope])).toEqual([lantern, { ...rope, qty: 2 }]);
+    expect(db.items).toEqual([{ ...lantern, qty: 10 }, { ...rope, qty: 2 }]);
+    await new Promise((r) => setTimeout(r, 900)); // past the debounce
+    expect(updateItems).toHaveBeenCalledTimes(2);
+    expect(screen.getByLabelText("Quantity: 10")).toBeInTheDocument();
+  });
+
+  it("a rename alone still lets a staged tap on that item land (no exact count involved)", async () => {
+    const { db } = setup([lantern]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Edit Lantern" }));
+    await user.click(screen.getByRole("button", { name: "Add one Lantern" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit item" });
+    await user.clear(within(dialog).getByLabelText("Name"));
+    await user.type(within(dialog).getByLabelText("Name"), "Lamp");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(updateItems).toHaveBeenCalledTimes(2));
+    expect(db.items).toEqual([{ ...lantern, name: "Lamp", qty: 3 }]);
+  });
+
+  // ------ nothing but held +/- taps may start while a delete is in flight ------
+  it("mid-delete: tapping a name or Remove does nothing but say so; a held tap still saves alone once the delete fails", async () => {
+    const { db } = setup([lantern]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Add one Lantern" })); // staged +1 → 3
+    const { settle, deleting } = await startPendingDelete(user);
+
+    await user.click(screen.getByRole("button", { name: "Edit Lantern" }));
+    expect(screen.queryByRole("dialog", { name: "Edit item" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove Lantern" }));
+    expect(screen.getByText("Lantern")).toBeInTheDocument();
+    expect(toastMock.show).toHaveBeenCalledWith("Deleting “Camping Gear”…");
+    expect(updateItems).not.toHaveBeenCalled();
+
+    await act(async () => {
+      settle.reject(new Error("Couldn't delete that tote. Please try again."));
+      await deleting.catch(() => {});
+    });
+    // Only the held +1 lands — no remove, no stray edit
+    await waitFor(() => expect(updateItems).toHaveBeenCalledTimes(1), { timeout: 2500 });
+    expect(db.items).toEqual([{ ...lantern, qty: 3 }]);
+  });
+
+  it("mid-delete: an exact count typed into an already-open sheet is refused, so the held tap can't land on top of it (reviewer scenario: 3 shown, set 5, delete fails)", async () => {
+    const { db } = setup([lantern]);
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Edit Lantern" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit item" });
+    // Behind the modal (not reachable on a phone, but the ordering must hold)
+    await user.click(screen.getByRole("button", { name: "Add one Lantern" })); // staged +1 → 3
+    const { settle, deleting } = await startPendingDelete(user);
+    expect(updateItems).not.toHaveBeenCalled(); // the tap is held
+
+    await user.clear(within(dialog).getByLabelText("Count"));
+    await user.type(within(dialog).getByLabelText("Count"), "5");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(screen.queryByRole("dialog", { name: "Edit item" })).not.toBeInTheDocument();
+    expect(updateItems).not.toHaveBeenCalled();
+    expect(toastMock.show).toHaveBeenCalledWith(
+      "Deleting “Camping Gear”, so the change to “Lantern” wasn't saved."
+    );
+
+    await act(async () => {
+      settle.reject(new Error("Couldn't delete that tote. Please try again."));
+      await deleting.catch(() => {});
+    });
+    // Never 6 (5 + the held tap): the held tap lands alone, the refused set does not
+    await waitFor(() => expect(updateItems).toHaveBeenCalledTimes(1), { timeout: 2500 });
+    expect(db.items).toEqual([{ ...lantern, qty: 3 }]);
+    expect(screen.getByLabelText("Quantity: 3")).toBeInTheDocument();
+  });
+
+  it("mid-delete: Move to another tote is refused too", async () => {
+    setup([lantern]);
+    ext.set((s) => ({
+      ...s,
+      totesByPosition: { B3: { ...tote, items: [lantern] }, A1: { id: 2, name: "Paint", position: "A1", items: [] } },
+    }));
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: "Edit Lantern" }));
+    const { settle, deleting } = await startPendingDelete(user);
+    await user.click(screen.getByRole("button", { name: /Move to another tote/ }));
+    expect(screen.queryByRole("dialog", { name: /Move “Lantern” to/ })).not.toBeInTheDocument();
+    expect(toastMock.show).toHaveBeenCalledWith("Deleting “Camping Gear”…");
+
+    await act(async () => {
+      settle.resolve();
+      await deleting;
+    });
+    expect(updateItems).not.toHaveBeenCalled();
+    expect(props.onDeleted).toHaveBeenCalled();
   });
 
   it("renaming saves through updateItem and Undo brings the old name back", async () => {

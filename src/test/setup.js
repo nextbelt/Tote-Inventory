@@ -16,6 +16,9 @@ window.matchMedia =
 if (!Element.prototype.scrollTo) {
   Element.prototype.scrollTo = () => {};
 }
+// jsdom's window.scrollTo only logs "Not implemented"; pages call it on every
+// view change. Tests that assert on it swap in their own spy.
+window.scrollTo = () => {};
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {};
 }
