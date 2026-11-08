@@ -1,5 +1,6 @@
 import { Camera, ChevronLeft, Plus, Save, X } from "lucide-react";
 import { useMemo, useState } from "react";
+import AutoGrowTextarea from "../components/AutoGrowTextarea";
 import ParsePreview from "../components/ParsePreview";
 import { useToast } from "../components/Toast";
 import { useTotes } from "../hooks/useTotes";
@@ -203,7 +204,7 @@ export default function FormPage({ editTote, position, onBack, onSaved }) {
           <div className="border-t border-gray-200 pt-5 dark:border-gray-700">
             <h3 className="apple-subtitle mb-3 text-lg">Add items</h3>
             <div className="flex gap-2">
-              <textarea
+              <AutoGrowTextarea
                 value={currentItem.name}
                 onChange={(e) =>
                   setCurrentItem((prev) => ({ ...prev, name: e.target.value }))
@@ -216,8 +217,9 @@ export default function FormPage({ editTote, position, onBack, onSaved }) {
                 aria-label="Item name"
                 className="apple-input block min-w-0 flex-1 resize-none leading-normal"
                 onKeyDown={(e) => {
-                  // Enter adds; Shift+Enter starts another line (one item per line)
-                  if (e.key === "Enter" && !e.shiftKey) {
+                  // Enter adds (type a comma to start the next item; pasted or
+                  // dictated lines work too). Not while an IME is composing.
+                  if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                     e.preventDefault();
                     addItemToList();
                   }

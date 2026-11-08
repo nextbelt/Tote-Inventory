@@ -32,6 +32,7 @@ import {
 } from "../utils/itemOps";
 import { leftoverText, parseItems } from "../utils/parseItems";
 import { validateImageFile } from "../utils/validation";
+import AutoGrowTextarea from "../components/AutoGrowTextarea";
 import ParsePreview from "../components/ParsePreview";
 
 const newId = () =>
@@ -561,12 +562,13 @@ export default function DetailPage({
         {/* Quick add */}
         <div className="apple-card mb-5 p-3">
           <div className="flex gap-2">
-            <textarea
+            <AutoGrowTextarea
               value={newItemName}
               onChange={(e) => setNewItemName(e.target.value)}
               onKeyDown={(e) => {
-                // Enter adds; Shift+Enter starts another line (one item per line)
-                if (e.key === "Enter" && !e.shiftKey) {
+                // Enter adds (type a comma to start the next item; pasted or
+                // dictated lines work too). Not while an IME is composing.
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();
                   handleAddItem();
                 }
