@@ -1,7 +1,32 @@
 import { supabase } from "../lib/supabase";
 import { compressImage } from "../utils/images";
-import { composeOps, normalizeItems, setItemImage } from "../utils/itemOps";
+import {
+  addItem,
+  composeOps,
+  normalizeItems,
+  removeItem,
+  setItemImage,
+} from "../utils/itemOps";
 import { dataUriToBlob, findEmbeddedPhotos, stripForCache } from "../utils/maintenance";
+import {
+  CONFIG_POSITION,
+  REMOVED_ITEMS_POSITION,
+  appendRemovedEntries,
+  isExpired,
+  isReservedPosition,
+  isTombstonePosition,
+  makeRemovedEntries,
+  parseTombstone,
+  removedEntriesFromRows,
+  toDeletedEntry,
+  tombstonePosition,
+} from "../utils/reservedRows";
+import {
+  normalizeNotes,
+  normalizeTags,
+  validateNotes,
+  validateTags,
+} from "../utils/validation";
 
 // ---------------------------------------------------------------------------
 // Storage model
@@ -21,13 +46,27 @@ const LOCAL_LAYOUT_KEY = "garage-layout"; // local-mode layout settings
 
 // In cloud mode the layout settings live in a hidden row of the totes table
 // (no extra table → works on the existing database, syncs via realtime).
-export const CONFIG_POSITION = "__config__";
+// Every reserved row kind is defined in utils/reservedRows.
+export { CONFIG_POSITION, REMOVED_ITEMS_POSITION };
 
-/** Split raw rows into real totes + the newest layout-settings row. */
-function splitConfig(rows) {
+/**
+ * Split raw rows into real totes and the reserved "__" rows: the newest
+ * layout-settings row, soft-deleted tombstones (as "recently deleted"
+ * entries, newest first) and the removed-items bin row(s). ANY position
+ * starting with "__" is kept out of `totes`, so a reserved row can never
+ * show up on a wall.
+ */
+export function splitConfig(rows) {
   const totes = [];
+  const deleted = [];
+  const removedRows = [];
   let config = null;
   (rows || []).forEach((row) => {
+    if (!row) return;
+    if (!isReservedPosition(row.position)) {
+      totes.push(row);
+      return;
+    }
     if (row.position === CONFIG_POSITION) {
       if (
         !config ||
@@ -35,15 +74,71 @@ function splitConfig(rows) {
       ) {
         config = row;
       }
+    } else if (row.position === REMOVED_ITEMS_POSITION) {
+      removedRows.push(row);
     } else {
-      totes.push(row);
+      const entry = toDeletedEntry(row);
+      if (entry) deleted.push(entry);
+      // any other "__" row is reserved for the future → hidden
     }
   });
+  deleted.sort(
+    (a, b) =>
+      new Date(b.deletedAt || 0).getTime() - new Date(a.deletedAt || 0).getTime()
+  );
   const layout =
     config && config.items && !Array.isArray(config.items)
       ? config.items
       : null;
-  return { totes, layout, configRow: config };
+  return { totes, layout, configRow: config, deleted, removedRows };
+}
+
+// ---------------------------------------------------------------------------
+// Capabilities — which optional database features are present.
+//
+// Tags, notes and the swap function arrive together in one SQL script the
+// owners paste once (MAINTENANCE.md). Until then the app must keep working:
+// we detect the columns from the rows select("*") returns and refuse to
+// send unknown columns (PostgREST would reject the whole write).
+// ---------------------------------------------------------------------------
+
+export const ALL_CAPABILITIES = Object.freeze({ tags: true, notes: true, swap: true });
+export const NO_CAPABILITIES = Object.freeze({ tags: false, notes: false, swap: false });
+
+export const SETUP_NEEDED_MESSAGE =
+  'One-time setup needed: run the SQL in MAINTENANCE.md ("One-time setup: tags, notes and swap").';
+
+/** Capabilities implied by a set of rows (cloud or cached). Local mode: all. */
+export function detectCapabilities(rows) {
+  if (!supabase) return { ...ALL_CAPABILITIES };
+  const list = Array.isArray(rows) ? rows.filter(Boolean) : [];
+  const has = (key) =>
+    list.length > 0 &&
+    list.some((row) => Object.prototype.hasOwnProperty.call(row, key));
+  const tags = has("tags");
+  const notes = has("notes");
+  // The migration adds all three together; the function has no column to
+  // sniff, so it is inferred from the columns.
+  return { tags, notes, swap: tags && notes };
+}
+
+// Last capabilities seen by getTotes (null until the first load).
+let knownCapabilities = null;
+
+/** Throw the setup error when the cloud database is known to lack `name`. */
+function assertCapability(name) {
+  if (!supabase) return;
+  if (knownCapabilities && knownCapabilities[name] === false) {
+    throw new UserFacingError(SETUP_NEEDED_MESSAGE, { code: "SETUP_NEEDED" });
+  }
+}
+
+/** Supabase/PostgREST errors that mean "the SQL script hasn't been run". */
+function isMissingSchemaError(err) {
+  const code = err?.code;
+  if (code === "PGRST202" || code === "PGRST204") return true; // function / column not in schema cache
+  if (code === "42703" || code === "42883") return true; // undefined column / function
+  return /could not find the (function|'?\w+'? column)/i.test(err?.message || "");
 }
 
 export const storageMode = supabase ? "cloud" : "local";
@@ -98,14 +193,37 @@ function nextStamp(previous) {
   return new Date(stamp).toISOString();
 }
 
-/** An error whose message is already written for the user — never rewrapped. */
-class UserFacingError extends Error {}
+/**
+ * An error whose message is already written for the user — never rewrapped.
+ * `code` lets callers branch without string-matching:
+ *   SETUP_NEEDED   the SQL script in MAINTENANCE.md hasn't been run
+ *   NO_TOMBSTONE   nothing to restore (already purged or never soft-deleted)
+ *   SLOT_TAKEN     the spot to restore into is occupied — offer a picker
+ *   TOTE_GONE      the tote a removed item came from no longer exists
+ */
+export class UserFacingError extends Error {
+  constructor(message, { code } = {}) {
+    super(message);
+    this.name = "UserFacingError";
+    if (code) this.code = code;
+  }
+}
 
 const NOT_FOUND_MESSAGE = "Couldn't find that tote to update.";
+const BUSY_MESSAGE =
+  "Someone else is editing this tote right now. Please try again in a moment.";
+const slotTakenError = (position) =>
+  new UserFacingError(
+    `Spot ${position} is taken now. Pick an empty spot to put the tote back.`,
+    { code: "SLOT_TAKEN" }
+  );
 
 /** Convert Supabase/network failures into messages a person can act on. */
 function friendlyError(err, action) {
   if (err instanceof UserFacingError) return err;
+  if (isMissingSchemaError(err)) {
+    return new UserFacingError(SETUP_NEEDED_MESSAGE, { code: "SETUP_NEEDED" });
+  }
   if (err?.code === "23505") {
     return new Error(
       "That spot already has a tote. Pick a different position."
@@ -180,14 +298,138 @@ export async function migrateLocalToSupabase() {
 }
 
 // ---------------------------------------------------------------------------
+// Removed-items bin helpers
+// ---------------------------------------------------------------------------
+
+const REMOVED_ITEMS_NAME = "Removed items (app bin)";
+
+// Id of the bin row once known (per page load) — saves a lookup per append.
+let removedRowId = null;
+
+/**
+ * Find or create the bin row. Serialized under the bin position so two
+ * removals on this phone can't both insert; if the OTHER phone inserted
+ * first the unique violation makes us re-read and use its row. When the row
+ * is created here `entries` go in with it (no second write needed).
+ * @returns {{ id, created: boolean, row?: object }}
+ */
+function ensureRemovedItemsRow(entries) {
+  return enqueueWrite(REMOVED_ITEMS_POSITION, async () => {
+    if (removedRowId !== null) return { id: removedRowId, created: false };
+    const stamp = new Date().toISOString();
+    const fresh = {
+      name: REMOVED_ITEMS_NAME,
+      position: REMOVED_ITEMS_POSITION,
+      items: appendRemovedEntries(entries)([]),
+      created_at: stamp,
+      updated_at: stamp,
+    };
+
+    // ---------- local mode ----------
+    if (!supabase) {
+      const totes = getLocalTotes();
+      const existing = totes.find((t) => t.position === REMOVED_ITEMS_POSITION);
+      if (existing) {
+        removedRowId = existing.id;
+        return { id: existing.id, created: false };
+      }
+      const row = { ...fresh, id: Date.now() };
+      totes.push(row);
+      saveLocalTotes(totes);
+      removedRowId = row.id;
+      return { id: row.id, created: true, row };
+    }
+
+    // ---------- cloud mode ----------
+    const findExisting = async () => {
+      const { data, error } = await supabase
+        .from("totes")
+        .select("id")
+        .eq("position", REMOVED_ITEMS_POSITION)
+        .order("updated_at", { ascending: false })
+        .limit(1);
+      if (error) throw error;
+      return Array.isArray(data) && data.length > 0 ? data[0].id : null;
+    };
+    try {
+      let id = await findExisting();
+      if (id !== null) {
+        removedRowId = id;
+        return { id, created: false };
+      }
+      const { data, error } = await supabase
+        .from("totes")
+        .insert(fresh)
+        .select()
+        .single();
+      if (error) {
+        if (error.code !== "23505") throw error;
+        // Lost the create race to the other phone — use its row
+        id = await findExisting();
+        if (id === null) throw error;
+        removedRowId = id;
+        return { id, created: false };
+      }
+      removedRowId = data.id;
+      return { id: data.id, created: true, row: data };
+    } catch (err) {
+      throw friendlyError(err, "save the removed item");
+    }
+  });
+}
+
+/** Every bin row (the live table may hold more than one). Cloud falls back
+ *  to the offline cache so the bin can still be browsed without signal. */
+async function readRemovedItemsRows() {
+  if (!supabase) {
+    return getLocalTotes().filter((t) => t.position === REMOVED_ITEMS_POSITION);
+  }
+  try {
+    const { data, error } = await supabase
+      .from("totes")
+      .select("*")
+      .eq("position", REMOVED_ITEMS_POSITION);
+    if (error) throw error;
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return readJSON(CACHE_KEY).filter(
+      (t) => t?.position === REMOVED_ITEMS_POSITION
+    );
+  }
+}
+
+/** True when a tote with this id exists and is not a reserved row. */
+async function isLiveTote(id) {
+  if (!supabase) {
+    const tote = getLocalTotes().find((t) => t.id === id);
+    return Boolean(tote) && !isReservedPosition(tote.position);
+  }
+  try {
+    const { data, error } = await supabase
+      .from("totes")
+      .select("id, position")
+      .eq("id", id)
+      .maybeSingle();
+    if (error) throw error;
+    return Boolean(data) && !isReservedPosition(data.position);
+  } catch (err) {
+    throw friendlyError(err, "find the tote");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
 
 export const toteService = {
   /**
-   * Return all totes, where they came from, and the saved layout settings:
-   *   { data, source: "cloud" | "cache" | "local", layout | null }
+   * Return all totes, where they came from, the saved layout settings, the
+   * recently deleted totes and the database capabilities:
+   *   { data, source: "cloud" | "cache" | "local", layout | null,
+   *     deleted: [{ id, name, originalPosition, deletedAt, items }],
+   *     capabilities: { tags, notes, swap } }
    * "cache" means the cloud is unreachable and this is the last-known copy.
+   * Tombstones older than 30 days are purged here, best effort.
    */
   async getTotes() {
     if (!supabase) {
@@ -198,7 +440,19 @@ export const toteService = {
           return null;
         }
       })();
-      return { data: getLocalTotes(), source: "local", layout };
+      const rows = getLocalTotes();
+      const kept = rows.filter(
+        (row) => !(isTombstonePosition(row?.position) && isExpired(row.updated_at))
+      );
+      if (kept.length !== rows.length) saveLocalTotes(kept);
+      const { totes, deleted } = splitConfig(kept);
+      return {
+        data: totes,
+        source: "local",
+        layout,
+        deleted,
+        capabilities: { ...ALL_CAPABILITIES },
+      };
     }
 
     try {
@@ -210,11 +464,32 @@ export const toteService = {
       // Strip embedded photos so a multi-MB legacy row can't overflow
       // the localStorage quota and silently kill offline browsing
       writeJSON(CACHE_KEY, stripForCache(data || []));
-      const { totes, layout } = splitConfig(data);
-      return { data: totes, source: "cloud", layout };
+      const capabilities = detectCapabilities(data);
+      knownCapabilities = capabilities;
+      const { totes, layout, deleted } = splitConfig(data);
+      // Best-effort 30-day purge: fire and forget, never blocks the load.
+      // The delete triggers a realtime reload, which then finds nothing old.
+      const expired = deleted.filter((d) => isExpired(d.deletedAt));
+      expired.forEach((d) => {
+        toteService.purgeDeletedTote(d.id).catch(() => {});
+      });
+      return {
+        data: totes,
+        source: "cloud",
+        layout,
+        deleted: deleted.filter((d) => !isExpired(d.deletedAt)),
+        capabilities,
+      };
     } catch {
-      const { totes, layout } = splitConfig(readJSON(CACHE_KEY));
-      return { data: totes, source: "cache", layout };
+      const cached = readJSON(CACHE_KEY);
+      const { totes, layout, deleted } = splitConfig(cached);
+      return {
+        data: totes,
+        source: "cache",
+        layout,
+        deleted,
+        capabilities: detectCapabilities(cached),
+      };
     }
   },
 
@@ -270,9 +545,11 @@ export const toteService = {
   },
 
   /**
-   * Patch specific fields of a tote (subset of name/position/items).
+   * Patch specific fields of a tote (subset of name/position/items/tags/notes).
    * Field-level patches mean an item edit can never clobber a concurrent
    * move (and vice versa); per-tote queueing keeps writes ordered.
+   * Tags/notes are normalized + validated here; in cloud mode they throw the
+   * setup error (and send nothing) until the database has the columns.
    * @throws {Error} in cloud mode when the write fails (never shadow-saves)
    */
   async updateTote(id, fields) {
@@ -280,6 +557,21 @@ export const toteService = {
     if (patch.name !== undefined) patch.name = patch.name.trim();
     if (patch.items !== undefined && !Array.isArray(patch.items)) {
       patch.items = [];
+    }
+    if (patch.position !== undefined && isReservedPosition(patch.position)) {
+      throw new UserFacingError("That spot can't be used for a tote.");
+    }
+    if (patch.tags !== undefined) {
+      assertCapability("tags");
+      patch.tags = normalizeTags(patch.tags);
+      const check = validateTags(patch.tags);
+      if (!check.valid) throw new UserFacingError(check.error);
+    }
+    if (patch.notes !== undefined) {
+      assertCapability("notes");
+      patch.notes = normalizeNotes(patch.notes);
+      const check = validateNotes(patch.notes);
+      if (!check.valid) throw new UserFacingError(check.error);
     }
 
     return enqueueWrite(id, async () => {
@@ -403,6 +695,10 @@ export const toteService = {
       });
     }
 
+    if (isReservedPosition(tote.position)) {
+      throw new UserFacingError("That spot can't be used for a tote.");
+    }
+
     const toteData = {
       name: tote.name.trim(),
       position: tote.position,
@@ -410,6 +706,19 @@ export const toteService = {
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
+    // Optional columns: only sent when given AND the database has them
+    if (tote.tags !== undefined) {
+      assertCapability("tags");
+      toteData.tags = normalizeTags(tote.tags);
+      const check = validateTags(toteData.tags);
+      if (!check.valid) throw new UserFacingError(check.error);
+    }
+    if (tote.notes !== undefined) {
+      assertCapability("notes");
+      toteData.notes = normalizeNotes(tote.notes);
+      const check = validateNotes(toteData.notes);
+      if (!check.valid) throw new UserFacingError(check.error);
+    }
 
     // ---------- local mode ----------
     if (!supabase) {
@@ -419,7 +728,12 @@ export const toteService = {
           "That spot already has a tote. Pick a different position."
         );
       }
-      const localTote = { ...toteData, id: Date.now() };
+      const localTote = {
+        tags: [],
+        notes: null,
+        ...toteData,
+        id: Date.now(),
+      };
       totes.push(localTote);
       saveLocalTotes(totes);
       return localTote;
@@ -440,22 +754,352 @@ export const toteService = {
   },
 
   /**
-   * Delete a tote by ID.
-   * @throws {Error} in cloud mode when the delete fails
+   * Soft-delete a tote: move the row to a reserved tombstone position
+   * ("__deleted__:<position>:<id>", unique per tote) and stamp updated_at as
+   * the deleted time. The slot frees immediately, the row keeps its id,
+   * items and created_at, and it can be restored for 30 days (then
+   * getTotes purges it). Deleting an already-deleted or unknown tote is a
+   * no-op.
+   * @returns the "recently deleted" entry, or null when there was nothing
+   * @throws {Error} in cloud mode when the write fails
    */
   async deleteTote(id) {
     return enqueueWrite(id, async () => {
+      const stamp = new Date().toISOString();
+
+      // ---------- local mode ----------
       if (!supabase) {
-        saveLocalTotes(getLocalTotes().filter((t) => t.id !== id));
-        return;
+        const totes = getLocalTotes();
+        const idx = totes.findIndex((t) => t.id === id);
+        if (idx < 0) return null;
+        if (isReservedPosition(totes[idx].position)) {
+          return toDeletedEntry(totes[idx]); // already a tombstone (or not a tote)
+        }
+        totes[idx] = {
+          ...totes[idx],
+          position: tombstonePosition(totes[idx].position, id),
+          updated_at: stamp,
+        };
+        saveLocalTotes(totes);
+        return toDeletedEntry(totes[idx]);
       }
+
+      // ---------- cloud mode ----------
+      // The position we read is part of the write condition, so a move made
+      // on the other phone in between is never recorded as the wrong
+      // original slot (we simply re-read and try again).
       try {
-        const { error } = await supabase.from("totes").delete().eq("id", id);
-        if (error) throw error;
+        for (let attempt = 0; attempt < CAS_ATTEMPTS; attempt++) {
+          const { data: row, error: readErr } = await supabase
+            .from("totes")
+            .select("*")
+            .eq("id", id)
+            .maybeSingle();
+          if (readErr) throw readErr;
+          if (!row) return null;
+          if (isReservedPosition(row.position)) return toDeletedEntry(row);
+
+          const patch = {
+            position: tombstonePosition(row.position, id),
+            updated_at: nextStamp(row.updated_at),
+          };
+          const { data, error } = await supabase
+            .from("totes")
+            .update(patch)
+            .eq("id", id)
+            .eq("position", row.position)
+            .select();
+          if (error) throw error;
+          if (Array.isArray(data) && data.length > 0) {
+            return toDeletedEntry(data[0]);
+          }
+        }
+        throw new UserFacingError(BUSY_MESSAGE);
       } catch (err) {
         throw friendlyError(err, "delete the tote");
       }
     });
+  },
+
+  /**
+   * Put a soft-deleted tote back: to its original spot when that is free,
+   * otherwise to `targetPosition` (must be free) — with no free target the
+   * SLOT_TAKEN error asks the caller to pick one. Keeps id and created_at.
+   * Restoring a tote that is already live just returns it.
+   * @throws {UserFacingError} NO_TOMBSTONE when there is nothing to restore
+   */
+  async restoreDeletedTote(id, targetPosition) {
+    return enqueueWrite(id, async () => {
+      const stamp = new Date().toISOString();
+      let target = targetPosition || null; // resolved from the tombstone below
+      const gone = () =>
+        new UserFacingError("That tote is no longer in Recently deleted.", {
+          code: "NO_TOMBSTONE",
+        });
+      const pickTarget = (row) => {
+        const parsed = parseTombstone(row.position);
+        if (!parsed) {
+          if (isReservedPosition(row.position)) throw gone(); // not a tote
+          return null; // already live
+        }
+        target = targetPosition || parsed.originalPosition;
+        if (!target || isReservedPosition(target)) {
+          throw new UserFacingError("Pick an empty spot to put the tote back.");
+        }
+        return target;
+      };
+
+      // ---------- local mode ----------
+      if (!supabase) {
+        const totes = getLocalTotes();
+        const idx = totes.findIndex((t) => t.id === id);
+        if (idx < 0) throw gone();
+        if (pickTarget(totes[idx]) === null) return totes[idx];
+        if (totes.some((t) => t.id !== id && t.position === target)) {
+          throw slotTakenError(target);
+        }
+        totes[idx] = { ...totes[idx], position: target, updated_at: stamp };
+        saveLocalTotes(totes);
+        return totes[idx];
+      }
+
+      // ---------- cloud mode ----------
+      try {
+        const { data: row, error: readErr } = await supabase
+          .from("totes")
+          .select("*")
+          .eq("id", id)
+          .maybeSingle();
+        if (readErr) throw readErr;
+        if (!row) throw gone();
+        if (pickTarget(row) === null) return row;
+
+        // The live table may lack UNIQUE(position): check before writing.
+        const { data: occupied, error: occErr } = await supabase
+          .from("totes")
+          .select("id")
+          .eq("position", target)
+          .limit(1);
+        if (occErr) throw occErr;
+        if (Array.isArray(occupied) && occupied.length > 0) {
+          throw slotTakenError(target);
+        }
+
+        const { data, error } = await supabase
+          .from("totes")
+          .update({ position: target, updated_at: nextStamp(row.updated_at) })
+          .eq("id", id)
+          .eq("position", row.position)
+          .select();
+        if (error) throw error;
+        if (Array.isArray(data) && data.length > 0) return data[0];
+
+        // The other phone restored or purged it meanwhile — report the truth
+        const { data: now, error: reErr } = await supabase
+          .from("totes")
+          .select("*")
+          .eq("id", id)
+          .maybeSingle();
+        if (reErr) throw reErr;
+        if (now && !isReservedPosition(now.position)) return now;
+        throw gone();
+      } catch (err) {
+        if (err?.code === "23505") throw slotTakenError(target || "");
+        throw friendlyError(err, "restore the tote");
+      }
+    });
+  },
+
+  /**
+   * Permanently remove a soft-deleted tote. Only ever deletes a row that is
+   * still a tombstone — a tote restored on the other phone is left alone.
+   */
+  async purgeDeletedTote(id) {
+    return enqueueWrite(id, async () => {
+      if (!supabase) {
+        saveLocalTotes(
+          getLocalTotes().filter(
+            (t) => !(t.id === id && isTombstonePosition(t.position))
+          )
+        );
+        return;
+      }
+      try {
+        const { data: row, error: readErr } = await supabase
+          .from("totes")
+          .select("position")
+          .eq("id", id)
+          .maybeSingle();
+        if (readErr) throw readErr;
+        if (!row || !isTombstonePosition(row.position)) return;
+        const { error } = await supabase
+          .from("totes")
+          .delete()
+          .eq("id", id)
+          .eq("position", row.position);
+        if (error) throw error;
+      } catch (err) {
+        throw friendlyError(err, "remove the tote for good");
+      }
+    });
+  },
+
+  /**
+   * Swap the positions of two totes in one step. Cloud mode calls the
+   * swap_tote_positions() database function (one transaction, UNIQUE-safe);
+   * until the SQL script has been run this throws the setup error.
+   * @returns {[toteA, toteB]} both rows with fresh updated_at
+   */
+  async swapTotes(aId, bId) {
+    if (aId === null || aId === undefined || bId === null || bId === undefined || aId === bId) {
+      throw new UserFacingError("Pick two different totes to swap.");
+    }
+    assertCapability("swap");
+
+    // Hold both per-tote queues in a fixed order (no deadlock with a
+    // concurrent swap of the same pair the other way round).
+    const [first, second] = [aId, bId].sort((x, y) =>
+      String(x).localeCompare(String(y))
+    );
+    return enqueueWrite(first, () =>
+      enqueueWrite(second, async () => {
+        // ---------- local mode ----------
+        if (!supabase) {
+          const totes = getLocalTotes();
+          const ia = totes.findIndex((t) => t.id === aId);
+          const ib = totes.findIndex((t) => t.id === bId);
+          if (ia < 0 || ib < 0) {
+            throw new UserFacingError("One of those totes no longer exists.");
+          }
+          if (
+            isReservedPosition(totes[ia].position) ||
+            isReservedPosition(totes[ib].position)
+          ) {
+            throw new UserFacingError("Those totes can't be swapped.");
+          }
+          const stamp = new Date().toISOString();
+          const positionA = totes[ia].position;
+          totes[ia] = { ...totes[ia], position: totes[ib].position, updated_at: stamp };
+          totes[ib] = { ...totes[ib], position: positionA, updated_at: stamp };
+          saveLocalTotes(totes);
+          return [totes[ia], totes[ib]];
+        }
+
+        // ---------- cloud mode ----------
+        try {
+          const { data, error } = await supabase.rpc("swap_tote_positions", {
+            a_id: aId,
+            b_id: bId,
+          });
+          if (error) throw error;
+          const rows = Array.isArray(data) ? data : data ? [data] : [];
+          const a = rows.find((r) => r.id === aId);
+          const b = rows.find((r) => r.id === bId);
+          if (!a || !b) {
+            throw new UserFacingError("One of those totes no longer exists.");
+          }
+          return [a, b];
+        } catch (err) {
+          if (err?.code === "P0002") {
+            throw new UserFacingError("One of those totes no longer exists.");
+          }
+          if (err?.code === "22023") {
+            throw new UserFacingError("Those totes can't be swapped.");
+          }
+          throw friendlyError(err, "swap the totes");
+        }
+      })
+    );
+  },
+
+  // -------------------------------------------------------------------------
+  // Removed-items bin — one reserved row ("__removed_items__") whose items
+  // are entries { id, item, toteId, toteName, position, removedAt }.
+  // No schema change; appends go through the same compare-and-swap path as
+  // every other item write.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Remember items that were removed from `tote` so they can be put back
+   * for 30 days. Creates the bin row on first use.
+   * @param {object} tote   the tote they came from ({ id, name, position })
+   * @param {object[]} items the removed items (full item objects)
+   * @returns the saved bin row, or null when nothing was given
+   */
+  async recordRemovedItems(tote, items) {
+    const list = normalizeItems(items);
+    if (list.length === 0) return null;
+    const entries = makeRemovedEntries(tote, list);
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const bin = await ensureRemovedItemsRow(entries);
+      if (bin.created) return bin.row;
+      try {
+        return await toteService.updateItems(bin.id, appendRemovedEntries(entries));
+      } catch (err) {
+        // The bin row vanished (purged by hand) — forget it and recreate once
+        if (attempt === 0 && err?.message === NOT_FOUND_MESSAGE) {
+          removedRowId = null;
+          continue;
+        }
+        throw err;
+      }
+    }
+    return null;
+  },
+
+  /** Entries in the removed-items bin, newest first (max 200, ≤ 30 days). */
+  async listRemovedItems() {
+    return removedEntriesFromRows(await readRemovedItemsRows());
+  },
+
+  /**
+   * Put a removed item back: into the tote it came from when that still
+   * exists, otherwise into `targetToteId`. Then drops the bin entry.
+   * @throws {UserFacingError} TOTE_GONE when the original tote is gone and
+   *   no target was given — the caller should offer a tote picker
+   * @returns the saved target tote
+   */
+  async restoreRemovedItem(entryId, targetToteId) {
+    const rows = await readRemovedItemsRows();
+    let holder = null;
+    let entry = null;
+    rows.forEach((row) => {
+      if (entry) return;
+      const found = (Array.isArray(row.items) ? row.items : []).find(
+        (e) => e?.id === entryId
+      );
+      if (found) {
+        holder = row;
+        entry = found;
+      }
+    });
+    if (!entry || !entry.item) {
+      throw new UserFacingError("That item is no longer in the bin.", {
+        code: "NO_TOMBSTONE",
+      });
+    }
+
+    let target = null;
+    if (entry.toteId !== null && entry.toteId !== undefined) {
+      if (await isLiveTote(entry.toteId)) target = entry.toteId;
+    }
+    if (target === null) {
+      if (targetToteId === null || targetToteId === undefined) {
+        throw new UserFacingError(
+          `The tote "${entry.toteName || "it came from"}" is gone. Pick a tote to put it in.`,
+          { code: "TOTE_GONE" }
+        );
+      }
+      if (!(await isLiveTote(targetToteId))) {
+        throw new UserFacingError(NOT_FOUND_MESSAGE);
+      }
+      target = targetToteId;
+    }
+
+    const saved = await toteService.updateItems(target, addItem(entry.item));
+    await toteService.updateItems(holder.id, removeItem(entryId));
+    return saved;
   },
 
   /**

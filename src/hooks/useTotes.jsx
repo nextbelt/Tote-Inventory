@@ -9,6 +9,7 @@ import {
 } from "react";
 import {
   migrateLocalToSupabase,
+  NO_CAPABILITIES,
   storageMode,
   toteService,
 } from "../services/toteService";
@@ -56,6 +57,12 @@ export function ToteProvider({ children }) {
   const [refreshing, setRefreshing] = useState(false);
   const [source, setSource] = useState(null); // "cloud" | "cache" | "local"
   const [layout, setLayout] = useState(DEFAULT_LAYOUT);
+  // Recently deleted totes [{ id, name, originalPosition, deletedAt, items }]
+  const [deleted, setDeleted] = useState([]);
+  // Optional database features { tags, notes, swap } (see MAINTENANCE.md)
+  const [capabilities, setCapabilities] = useState(NO_CAPABILITIES);
+  const deletedRef = useRef(deleted);
+  deletedRef.current = deleted;
   // Epoch ms of the last successful CLOUD fetch (never set by cache/local).
   // Seeded from the previous session so an offline cold start knows its age.
   const [lastSyncedAt, setLastSyncedAt] = useState(readSyncedAt);
@@ -94,8 +101,13 @@ export function ToteProvider({ children }) {
       }
     };
     try {
-      const { data, source: src, layout: savedLayout } =
-        await toteService.getTotes();
+      const {
+        data,
+        source: src,
+        layout: savedLayout,
+        deleted: trash,
+        capabilities: caps,
+      } = await toteService.getTotes();
       if (!canApply()) return;
 
       if (src === "cache" && sourceRef.current === "cloud") {
@@ -115,9 +127,15 @@ export function ToteProvider({ children }) {
       // response that started earlier (cloud always beats its own mirror).
       if (src !== "cache") lastAppliedSeqRef.current = seq;
       sourceRef.current = src;
+      // `deleted` and `capabilities` belong to the same load as `totes`, so
+      // they sit inside the same guard: a stale or cache-sourced response can
+      // never switch capabilities back off or overwrite `deleted` with a list
+      // from before the last deleteTote.
       setTotes(Array.isArray(data) ? data : []);
       setSource(src);
       if (savedLayout) setLayout({ ...DEFAULT_LAYOUT, ...savedLayout });
+      setDeleted(Array.isArray(trash) ? trash : []);
+      if (caps) setCapabilities(caps);
       if (src === "cloud") {
         const now = Date.now();
         lastSyncedAtRef.current = now;
@@ -323,9 +341,13 @@ export function ToteProvider({ children }) {
     return savedTote;
   }, []);
 
+  /** Soft-delete: the tote moves to Recently deleted (30 days). */
   const deleteTote = useCallback(async (id) => {
-    await toteService.deleteTote(id);
+    const entry = await toteService.deleteTote(id);
     setTotes((prev) => prev.filter((t) => t.id !== id));
+    if (entry) {
+      setDeleted((prev) => [entry, ...prev.filter((d) => d.id !== entry.id)]);
+    }
   }, []);
 
   /** Patch specific fields (items, position, name) of one tote. */
@@ -351,15 +373,76 @@ export function ToteProvider({ children }) {
     [updateTote]
   );
 
-  /** Re-create a just-deleted tote (undo). Gets a fresh id. */
+  /** Put a soft-deleted tote back (keeps its id and created_at). Updates
+   *  the lists; realtime/local reloads agree with this. */
+  const restoreDeletedTote = useCallback(async (id, targetPosition) => {
+    const row = await toteService.restoreDeletedTote(id, targetPosition);
+    setDeleted((prev) => prev.filter((d) => d.id !== row.id));
+    setTotes((prev) => [...prev.filter((t) => t.id !== row.id), row]);
+    return row;
+  }, []);
+
+  /** Permanently remove a tote from Recently deleted. */
+  const purgeDeletedTote = useCallback(async (id) => {
+    await toteService.purgeDeletedTote(id);
+    setDeleted((prev) => prev.filter((d) => d.id !== id));
+  }, []);
+
+  /**
+   * Undo a delete. The soft-deleted row itself comes back (same id and
+   * created_at) — found by the snapshot's `id`, or, for an id-less snapshot,
+   * by the newest tombstone with the same name and spot (the one the user
+   * just deleted). Only when no tombstone exists any more is the tote
+   * re-created from the snapshot.
+   */
   const restoreTote = useCallback(
-    (tote) =>
-      saveTote(
+    async (tote) => {
+      let id = tote?.id;
+      if (id === undefined || id === null) {
+        const match = deletedRef.current.find(
+          (d) => d.originalPosition === tote?.position && d.name === tote?.name
+        ); // `deleted` is newest first
+        if (match) id = match.id;
+      }
+      if (id !== undefined && id !== null) {
+        try {
+          return await restoreDeletedTote(id);
+        } catch (err) {
+          if (err?.code !== "NO_TOMBSTONE") throw err;
+        }
+      }
+      return saveTote(
         { name: tote.name, position: tote.position, items: tote.items },
         true
-      ),
-    [saveTote]
+      );
+    },
+    [restoreDeletedTote, saveTote]
   );
+
+  /** Swap two totes' spots in one step (cloud: one database transaction). */
+  const swapTotes = useCallback(async (aId, bId) => {
+    const rows = await toteService.swapTotes(aId, bId);
+    setTotes((prev) =>
+      prev.map((t) => rows.find((r) => r.id === t.id) || t)
+    );
+    return rows;
+  }, []);
+
+  /** Remember items removed from a tote so they can be put back (30 days). */
+  const recordRemovedItems = useCallback(
+    (tote, items) => toteService.recordRemovedItems(tote, items),
+    []
+  );
+
+  /** Entries in the removed-items bin, newest first. */
+  const listRemovedItems = useCallback(() => toteService.listRemovedItems(), []);
+
+  /** Put a removed item back into its tote (or `targetToteId`). */
+  const restoreRemovedItem = useCallback(async (entryId, targetToteId) => {
+    const savedTote = await toteService.restoreRemovedItem(entryId, targetToteId);
+    setTotes((prev) => prev.map((t) => (t.id === savedTote.id ? savedTote : t)));
+    return savedTote;
+  }, []);
 
   /** Save the side-wall shelf counts (synced to other devices). */
   const saveLayout = useCallback(async (nextLayout) => {
@@ -413,6 +496,15 @@ export function ToteProvider({ children }) {
       // Freshness: when the cloud copy was last fetched, and the realtime link
       lastSyncedAt,
       connection,
+      // --- recently deleted, swap, tags/notes capabilities, removed-items bin ---
+      deleted,
+      capabilities,
+      swapTotes,
+      restoreDeletedTote,
+      purgeDeletedTote,
+      recordRemovedItems,
+      listRemovedItems,
+      restoreRemovedItem,
     }),
     [
       totes,
@@ -433,6 +525,14 @@ export function ToteProvider({ children }) {
       saveLayout,
       lastSyncedAt,
       connection,
+      deleted,
+      capabilities,
+      swapTotes,
+      restoreDeletedTote,
+      purgeDeletedTote,
+      recordRemovedItems,
+      listRemovedItems,
+      restoreRemovedItem,
     ]
   );
 

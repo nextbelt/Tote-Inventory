@@ -82,3 +82,25 @@ describe("embedded photos", () => {
     expect(blob.size).toBe(5); // "hello"
   });
 });
+
+describe("reserved rows are never tidy-up candidates", () => {
+  const dataUri = "data:image/jpeg;base64,/9j/4AAQ";
+  const reserved = [
+    tote(90, "__config__", "2026-01-01"),
+    tote(91, "__config__", "2026-02-01"),
+    tote(92, "__removed_items__", "2026-01-01", [
+      { id: "1:x:t", item: { id: "x", image: dataUri }, image: dataUri },
+    ]),
+    tote(93, "__deleted__:A1:93", "2026-01-01", [{ id: "y", name: "Old", image: dataUri }]),
+    tote(94, "__deleted__:A1:94", "2026-01-02"),
+  ];
+
+  it("findDuplicates ignores duplicate settings rows and tombstones", () => {
+    expect(findDuplicates([...reserved, tote(1, "A1", "2026-01-01")])).toEqual([]);
+  });
+
+  it("findEmbeddedPhotos skips photos inside reserved rows", () => {
+    expect(findEmbeddedPhotos(reserved)).toEqual([]);
+    expect(embeddedPhotoBytes(reserved)).toBe(0);
+  });
+});

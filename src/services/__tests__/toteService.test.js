@@ -72,7 +72,7 @@ describe("toteService (local mode)", () => {
     ).rejects.toThrow(/couldn't find/i);
   });
 
-  it("deleteTote removes the tote from storage", async () => {
+  it("deleteTote soft-deletes: the tote leaves the walls but stays as a tombstone", async () => {
     const created = await toteService.saveTote(
       { name: "Camping Gear", position: "B3", items: [] },
       true
@@ -80,9 +80,11 @@ describe("toteService (local mode)", () => {
     await toteService.deleteTote(created.id);
 
     const stored = readStore();
-    expect(stored).toHaveLength(0);
+    expect(stored).toHaveLength(1);
+    expect(stored[0].position).toBe(`__deleted__:B3:${created.id}`);
 
     const result = await toteService.getTotes();
     expect(result.data).toHaveLength(0);
+    expect(result.deleted.map((d) => d.id)).toEqual([created.id]);
   });
 });
