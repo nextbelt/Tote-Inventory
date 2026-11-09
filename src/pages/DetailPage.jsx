@@ -102,6 +102,7 @@ export default function DetailPage({
     swapTotes,
     recordRemovedItems,
     forgetRemovedItems,
+    loadData,
   } = useTotes();
   const toast = useToast();
   // Until the owners run the setup SQL these columns don't exist: the UI for
@@ -613,6 +614,14 @@ export default function DetailPage({
     setNotesEditing(false);
   };
 
+  /** "Keep theirs": the database just told us this phone's copy is behind
+   *  (the channel may still be reconnecting), so fetch the real note rather
+   *  than keep showing the stale one under the title. */
+  const keepTheirNotes = () => {
+    closeNotes();
+    loadData?.({ background: true });
+  };
+
   /**
    * Save the draft. The service compares against the note as STORED (this
    * phone's store may be well behind while the channel reconnects): it only
@@ -629,8 +638,10 @@ export default function DetailPage({
       toast.error(check.error);
       return;
     }
-    // The user changed nothing: nothing to write, whatever theirs is now
-    if (notes === notesOpenedOn) {
+    // The user changed nothing: nothing to write, whatever theirs is now.
+    // Not when forcing: "Replace with mine" on a draft edited back to the
+    // original is an explicit choice to put that text back over theirs.
+    if (!force && notes === notesOpenedOn) {
       closeNotes();
       return;
     }
@@ -939,7 +950,7 @@ export default function DetailPage({
                   <div className="mt-3 flex gap-2">
                     <button
                       type="button"
-                      onClick={closeNotes}
+                      onClick={keepTheirNotes}
                       disabled={savingNotes}
                       className="min-h-[44px] flex-1 rounded-xl border border-gray-300 px-3 font-semibold text-gray-700 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300"
                     >
