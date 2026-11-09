@@ -172,7 +172,9 @@ export default function DetailPage({
   const [notesEditing, setNotesEditing] = useState(false);
   const [notesDraft, setNotesDraft] = useState("");
   // The (normalized) note the editor opened on, to spot the other phone's
-  // edit before overwriting it — and their text once such a clash is found
+  // edit before overwriting it — and, once such a clash is found, an object
+  // { theirs } holding their text. An OBJECT, not the text itself: their
+  // note may be null (they removed it), and null must still show the alert
   const [notesOpenedOn, setNotesOpenedOn] = useState(null);
   const [notesConflict, setNotesConflict] = useState(null);
   const [savingNotes, setSavingNotes] = useState(false);
@@ -635,13 +637,14 @@ export default function DetailPage({
     setSavingNotes(true);
     try {
       await updateNotes(tote.id, notes, {
-        expected: force ? notesConflict : notesOpenedOn,
+        expected: force && notesConflict ? notesConflict.theirs : notesOpenedOn,
       });
       closeNotes();
     } catch (err) {
       if (err?.code === "NOTES_CHANGED") {
-        // Never silently last-writer-wins: show theirs, keep the draft
-        setNotesConflict(err.details?.theirs ?? null);
+        // Never silently last-writer-wins: show theirs (null when they
+        // removed the note — still a conflict to show), keep the draft
+        setNotesConflict({ theirs: err.details?.theirs ?? null });
       } else {
         // Keep the editor open so what was typed isn't lost
         toast.error(err.message);
@@ -922,7 +925,7 @@ export default function DetailPage({
                 autoFocus
                 className="apple-input w-full resize-none leading-normal"
               />
-              {notesConflict !== null ? (
+              {notesConflict ? (
                 <div
                   role="alert"
                   className="mt-2 rounded-xl bg-amber-50 p-3 dark:bg-amber-950/40"
@@ -931,7 +934,7 @@ export default function DetailPage({
                     The other phone changed this note while you were editing:
                   </p>
                   <p className="mt-1 whitespace-pre-wrap break-words text-sm text-gray-700 dark:text-gray-300">
-                    {notesConflict || "(note removed)"}
+                    {notesConflict.theirs || "(note removed)"}
                   </p>
                   <div className="mt-3 flex gap-2">
                     <button
