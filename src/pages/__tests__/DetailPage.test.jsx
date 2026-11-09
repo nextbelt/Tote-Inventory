@@ -1493,8 +1493,40 @@ describe("DetailPage tote notes, tags, swap and the bins", () => {
     expect(screen.getByText("Fragile glass")).toBeInTheDocument();
   });
 
-  it("notes: 'Keep theirs' after the other phone removed the note closes the editor and writes nothing", async () => {
+  it("notes: 'Keep theirs' after the other phone removed the note closes the editor, writes nothing, and refetches so the stale note doesn't linger", async () => {
     setup([lantern]);
+    const db = { notes: null };
+    const updateNotes = fakeUpdateNotes({ db });
+    const loadData = vi.fn();
+    ext.set((s) => ({
+      ...s,
+      totes: [{ ...tote, items: [lantern], notes: "Fragile" }],
+      capabilities: caps({ notes: true }),
+      updateNotes,
+      loadData,
+    }));
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: /Edit note/ }));
+    await user.type(screen.getByLabelText("Notes"), " glass");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("(note removed)");
+    expect(loadData).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Keep theirs" }));
+    expect(screen.queryByLabelText("Notes")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(updateNotes.writes).toEqual([]);
+    expect(db.notes).toBeNull();
+    // This phone's copy is known to be behind: catch up in the background
+    expect(loadData).toHaveBeenCalledTimes(1);
+    expect(loadData).toHaveBeenCalledWith({ background: true });
+  });
+
+  it("notes: editing the draft back to the original and tapping 'Replace with mine' puts the original back over theirs", async () => {
+    setup([lantern]);
+    // The other phone removed the note; this phone opened the editor on "Fragile"
     const db = { notes: null };
     const updateNotes = fakeUpdateNotes({ db });
     ext.set((s) => ({
@@ -1511,11 +1543,15 @@ describe("DetailPage tote notes, tags, swap and the bins", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("(note removed)");
 
-    await user.click(screen.getByRole("button", { name: "Keep theirs" }));
+    // Changes their mind: wants exactly the note they opened on, back
+    await user.clear(screen.getByLabelText("Notes"));
+    await user.type(screen.getByLabelText("Notes"), "Fragile");
+    await user.click(screen.getByRole("button", { name: "Replace with mine" }));
+
+    await waitFor(() => expect(db.notes).toBe("Fragile"));
+    expect(updateNotes).toHaveBeenLastCalledWith(1, "Fragile", { expected: null });
+    expect(updateNotes.writes).toEqual([{ id: 1, notes: "Fragile" }]);
     expect(screen.queryByLabelText("Notes")).not.toBeInTheDocument();
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(updateNotes.writes).toEqual([]);
-    expect(db.notes).toBeNull();
   });
 
   it("notes: 'Keep theirs' drops the draft and writes nothing; an untouched draft just closes even if theirs changed; a draft equal to theirs writes nothing", async () => {
