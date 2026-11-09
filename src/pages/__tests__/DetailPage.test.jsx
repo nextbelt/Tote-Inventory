@@ -1452,6 +1452,72 @@ describe("DetailPage tote notes, tags, swap and the bins", () => {
     });
   });
 
+  it("notes: when the other phone REMOVED the note (theirs is null) Save still shows the alert as '(note removed)', and 'Replace with mine' saves with expected null", async () => {
+    setup([lantern]);
+    // The database note is already gone; our store still shows the old text
+    const db = { notes: null };
+    const updateNotes = fakeUpdateNotes({ db });
+    ext.set((s) => ({
+      ...s,
+      totes: [{ ...tote, items: [lantern], notes: "Fragile" }],
+      capabilities: caps({ notes: true }),
+      updateNotes,
+    }));
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: /Edit note/ }));
+    await user.type(screen.getByLabelText("Notes"), " glass");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    // Refused with theirs = null — a conflict all the same, so the user is
+    // told instead of the editor silently doing nothing
+    await waitFor(() =>
+      expect(updateNotes).toHaveBeenCalledWith(1, "Fragile glass", { expected: "Fragile" })
+    );
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("(note removed)");
+    expect(updateNotes.writes).toEqual([]);
+    expect(db.notes).toBeNull();
+    expect(screen.getByLabelText("Notes")).toHaveValue("Fragile glass"); // draft kept
+    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+    expect(toastMock.error).not.toHaveBeenCalled();
+
+    // Tapping Save again is not possible (the alert replaced it); the way
+    // forward is explicit — on top of THEIR (removed) note
+    await user.click(screen.getByRole("button", { name: "Replace with mine" }));
+    await waitFor(() => expect(db.notes).toBe("Fragile glass"));
+    expect(updateNotes).toHaveBeenLastCalledWith(1, "Fragile glass", { expected: null });
+    expect(updateNotes.writes).toEqual([{ id: 1, notes: "Fragile glass" }]);
+    expect(screen.queryByLabelText("Notes")).not.toBeInTheDocument();
+    expect(screen.getByText("Fragile glass")).toBeInTheDocument();
+  });
+
+  it("notes: 'Keep theirs' after the other phone removed the note closes the editor and writes nothing", async () => {
+    setup([lantern]);
+    const db = { notes: null };
+    const updateNotes = fakeUpdateNotes({ db });
+    ext.set((s) => ({
+      ...s,
+      totes: [{ ...tote, items: [lantern], notes: "Fragile" }],
+      capabilities: caps({ notes: true }),
+      updateNotes,
+    }));
+    const user = userEvent.setup();
+    render(<DetailPage {...props} />);
+
+    await user.click(screen.getByRole("button", { name: /Edit note/ }));
+    await user.type(screen.getByLabelText("Notes"), " glass");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("(note removed)");
+
+    await user.click(screen.getByRole("button", { name: "Keep theirs" }));
+    expect(screen.queryByLabelText("Notes")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(updateNotes.writes).toEqual([]);
+    expect(db.notes).toBeNull();
+  });
+
   it("notes: 'Keep theirs' drops the draft and writes nothing; an untouched draft just closes even if theirs changed; a draft equal to theirs writes nothing", async () => {
     setup([lantern]);
     const updateNotes = fakeUpdateNotes();
