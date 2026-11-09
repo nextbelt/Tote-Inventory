@@ -180,6 +180,13 @@ export default function RecentlyDeletedSheet({ onClose }) {
           setRemoved((prev) => (prev || []).filter((e) => e.id !== entry.id));
           setPickToteFor(null);
           toast.error(err.message);
+        } else if (err?.code === "ALREADY_THERE") {
+          // It already lives in a tote (put back or moved on the other
+          // phone before this phone caught up) — the service dropped the
+          // stale entry rather than give the item a second home
+          setRemoved((prev) => (prev || []).filter((e) => e.id !== entry.id));
+          setPickToteFor(null);
+          toast.show(err.message);
         } else {
           toast.error(err?.message || "Couldn't put the item back.");
         }

@@ -97,7 +97,11 @@ duplicated. It lists the duplicated positions, and there are two kinds:
   script again.
 
 Everything else (tags, notes, swap) is already in place after the first
-run.
+run. One exception: if you ran an **earlier version** of this script (its
+swap function took two arguments), run the current one again — the app now
+also tells the function where it last saw each tote, so a tote the other
+phone moved a moment ago is never swapped from the wrong spot. Until then
+Swap shows "one-time setup needed".
 
 Recently deleted totes and removed items need **no** database change: they
 live in hidden rows of the same table (positions starting with `__`) and

@@ -36,13 +36,13 @@ import {
   updateItem,
 } from "../utils/itemOps";
 import { leftoverText, parseItems } from "../utils/parseItems";
+import { diffTags, invertTagDelta, isEmptyDelta } from "../utils/tagOps";
 import {
   MAX_NOTES_LENGTH,
   normalizeNotes,
   normalizeTags,
   validateImageFile,
   validateNotes,
-  validateTags,
 } from "../utils/validation";
 import AutoGrowTextarea from "../components/AutoGrowTextarea";
 import DuplicateHint from "../components/DuplicateHint";
@@ -79,35 +79,6 @@ function wallSlots(wall) {
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
-const sameList = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
-const lowerTag = (tag) => tag.toLocaleLowerCase();
-
-/**
- * What the tag editor changed, as a delta against the list it opened on —
- * so it can be re-applied to whatever the tags are NOW (the other phone may
- * have edited them while the sheet was open) instead of replacing them.
- * Compared by EXACT string, so fixing a tag's capitalization ("xmas" →
- * "Xmas") counts as a change: it removes the old spelling and adds the new
- * one. Case-insensitive matching happens in applyTagDelta.
- */
-const diffTags = (opened, next) => ({
-  added: next.filter((t) => !opened.includes(t)),
-  removed: opened.filter((t) => !next.includes(t)),
-});
-
-/**
- * `current` without `removed` (by case-insensitive key), then `added`;
- * normalizeTags keeps the FIRST spelling of a tag that appears twice, so a
- * tag the other phone already has (in any case) wins over our added copy.
- */
-const applyTagDelta = (current, { added, removed }) => {
-  const gone = new Set(removed.map(lowerTag));
-  return normalizeTags([
-    ...current.filter((t) => !gone.has(lowerTag(t))),
-    ...added,
-  ]);
-};
-
 export default function DetailPage({
   tote: initialTote,
   onBack,
@@ -123,12 +94,14 @@ export default function DetailPage({
     walls,
     capabilities,
     updateItems,
-    updateTote,
+    updateTags,
+    updateNotes,
     deleteTote,
     moveTote,
     restoreTote,
     swapTotes,
     recordRemovedItems,
+    forgetRemovedItems,
   } = useTotes();
   const toast = useToast();
   // Until the owners run the setup SQL these columns don't exist: the UI for
@@ -171,10 +144,6 @@ export default function DetailPage({
   const deletingRef = useRef(false);
   const toteRef = useRef(tote);
   toteRef.current = tote;
-  // Latest store, for handlers that run later than the render they came
-  // from (toast Undo, a confirm tapped after a realtime refresh)
-  const totesRef = useRef(totes);
-  totesRef.current = totes;
 
   const items = useMemo(
     () =>
@@ -418,20 +387,37 @@ export default function DetailPage({
   const recordRemoval = useCallback(
     (removed) => {
       const t = toteRef.current;
-      Promise.resolve()
+      return Promise.resolve()
         .then(() =>
           recordRemovedItems(
             { id: t.id, name: t.name, position: t.position },
             removed
           )
         )
-        .catch(() => {});
+        .catch(() => null);
     },
     [recordRemovedItems]
   );
 
+  /**
+   * Undo put a removed item back, so its bin entry is stale: drop it, best
+   * effort, once the record itself has settled (so the drop can't run
+   * before the entry exists). Left behind, the entry would offer "Put back"
+   * again as soon as the item moved on to another tote — and give the same
+   * item two homes.
+   */
+  const forgetRemoval = useCallback(
+    (toteId, itemId, recorded) => {
+      Promise.resolve(recorded)
+        .then(() => forgetRemovedItems(toteId, [itemId]))
+        .catch(() => {});
+    },
+    [forgetRemovedItems]
+  );
+
   const removeItem = (item) => {
     if (blockedByDelete()) return;
+    const toteId = toteRef.current.id;
     const index = items.findIndex((it) => it.id === item.id);
     // Land any staged +/- first so Undo brings back the quantity you saw
     flushStaged();
@@ -443,6 +429,7 @@ export default function DetailPage({
     // render-time applications must not overwrite this).
     const remove = removeItemOp(item.id);
     let hit = null;
+    let recorded = null; // the bin write, once the removal has landed
     const persist = (list) => {
       hit = (Array.isArray(list) ? list : []).find((it) => it.id === item.id) ?? null;
       return remove(list);
@@ -450,7 +437,7 @@ export default function DetailPage({
     const done = runOp(remove, { persist }).then((saved) => {
       // `hit` carries the stored count, which includes the staged taps the
       // flush above landed first (same per-tote write queue)
-      if (saved && hit) recordRemoval([hit]);
+      if (saved && hit) recorded = recordRemoval([hit]);
       return saved;
     });
     toast.show(`Removed “${item.name}”`, {
@@ -469,7 +456,9 @@ export default function DetailPage({
         }
         // Restore-by-id, and the row AS STORED (the other phone's count or
         // note is not lost on Undo): safe even if the list changed since
-        return runOp(restoreItem(hit ?? item, index));
+        const restored = await runOp(restoreItem(hit ?? item, index));
+        if (restored && saved && hit) forgetRemoval(toteId, hit.id, recorded);
+        return restored;
       },
     });
   };
@@ -623,10 +612,12 @@ export default function DetailPage({
   };
 
   /**
-   * Save the draft. updateTote is a plain last-writer-wins patch, so before
-   * overwriting, check the note the other phone may have saved while the
-   * editor was open: if it differs from what this editor opened on, show
-   * their text and let the user choose (`force` is that choice).
+   * Save the draft. The service compares against the note as STORED (this
+   * phone's store may be well behind while the channel reconnects): it only
+   * writes when the stored note is still the one this editor opened on,
+   * otherwise it refuses and hands back the other phone's text, which is
+   * shown so the user can choose. "Replace with mine" (`force`) saves on
+   * top of THAT text — if it changed yet again, the newer text is shown.
    */
   const handleSaveNotes = async ({ force = false } = {}) => {
     if (blockedByDelete()) return;
@@ -636,23 +627,25 @@ export default function DetailPage({
       toast.error(check.error);
       return;
     }
-    const theirs = normalizeNotes(toteRef.current.notes);
-    // Already says this (or the user changed nothing): nothing to write
-    if (notes === theirs || notes === notesOpenedOn) {
+    // The user changed nothing: nothing to write, whatever theirs is now
+    if (notes === notesOpenedOn) {
       closeNotes();
-      return;
-    }
-    if (theirs !== notesOpenedOn && !force) {
-      setNotesConflict(theirs);
       return;
     }
     setSavingNotes(true);
     try {
-      await updateTote(tote.id, { notes });
+      await updateNotes(tote.id, notes, {
+        expected: force ? notesConflict : notesOpenedOn,
+      });
       closeNotes();
     } catch (err) {
-      // Keep the editor open so what was typed isn't lost
-      toast.error(err.message);
+      if (err?.code === "NOTES_CHANGED") {
+        // Never silently last-writer-wins: show theirs, keep the draft
+        setNotesConflict(err.details?.theirs ?? null);
+      } else {
+        // Keep the editor open so what was typed isn't lost
+        toast.error(err.message);
+      }
     } finally {
       setSavingNotes(false);
     }
@@ -666,41 +659,28 @@ export default function DetailPage({
 
   /**
    * The editor hands back a full list, but only its CHANGES are saved: the
-   * tags it added and removed, applied to the tags as they are now. So a tag
-   * the other phone added while the sheet was open survives, and Undo takes
-   * back only this edit (not theirs).
+   * tags it added and removed, which the service applies to the tags as
+   * STORED (not this phone's store, which may be behind). So a tag the other
+   * phone added while the sheet was open survives, and Undo takes back only
+   * what this edit really changed (not theirs) — again on top of whatever
+   * the tags are by then.
    */
   const handleSaveTags = async (next) => {
     const opened = tagEditor?.opened ?? toteTags;
     setTagEditor(null);
     if (blockedByDelete()) return;
     const delta = diffTags(opened, next);
-    if (delta.added.length === 0 && delta.removed.length === 0) return;
-    const current = normalizeTags(toteRef.current.tags);
-    const merged = applyTagDelta(current, delta);
-    if (sameList(merged, current)) return; // the other phone already did it
-    const check = validateTags(merged);
-    if (!check.valid) {
-      toast.error(check.error);
-      return;
-    }
-    // What this save really changes (a tag the other phone had already
-    // added isn't ours to take back on Undo)
-    const effective = diffTags(current, merged);
+    if (isEmptyDelta(delta)) return;
     try {
-      await updateTote(tote.id, { tags: merged });
-      toast.show(merged.length === 0 ? "Tags removed" : "Tags updated", {
+      const { tote: saved, applied } = await updateTags(tote.id, delta);
+      if (isEmptyDelta(applied)) return; // the other phone already did it
+      const left = normalizeTags(saved?.tags);
+      toast.show(left.length === 0 ? "Tags removed" : "Tags updated", {
         actionLabel: "Undo",
-        onAction: () => {
-          // Same delta backwards, again on top of whatever the tags are NOW
-          const reverted = applyTagDelta(normalizeTags(toteRef.current.tags), {
-            added: effective.removed,
-            removed: effective.added,
-          });
-          return updateTote(tote.id, { tags: reverted }).catch((err) =>
+        onAction: () =>
+          updateTags(tote.id, invertTagDelta(applied)).catch((err) =>
             toast.error(err.message)
-          );
-        },
+          ),
       });
     } catch (err) {
       toast.error(err.message);
@@ -718,10 +698,6 @@ export default function DetailPage({
     setSheet(null);
     setSwapWith(null);
   };
-
-  /** The tote at `position` in the LATEST store (undefined when empty). */
-  const toteAt = (position) =>
-    totesRef.current.find((t) => t.position === position);
 
   const handleMove = async (position) => {
     const from = tote.position;
@@ -744,49 +720,38 @@ export default function DetailPage({
    * Trade spots with `other` in one step (cloud: one transaction).
    *
    * `other` is the occupant as it was when its slot was tapped, and the
-   * confirm sheet promised THAT trade (this tote to `other`'s spot, `other`
-   * here). swapTotes trades whatever spots the two hold at call time, so if
-   * either tote moved on the other phone in between, the trade would be a
-   * different one than the user confirmed — refuse it and say why. Undo is
-   * held to the same promise: it only swaps back while both are still where
-   * the swap left them, or the physical totes and printed labels would end
-   * up not matching the app.
+   * confirm sheet promised THAT trade (this tote from `from` to `other`'s
+   * spot, `other` the other way). The spots the user saw go along as the
+   * EXPECTED positions: the service checks them against the stored rows
+   * (and the database function again under its locks), so if either tote
+   * was moved on the other phone meanwhile — even while this phone's store
+   * was behind — nothing is swapped and the user is told why. Undo is held
+   * to the same promise with the positions reversed: it only swaps back
+   * while both are still where the swap left them, or the physical totes
+   * and printed labels would end up not matching the app. Nothing here
+   * reads this page's state, so Undo works after the page is gone.
    */
   const handleSwap = async (other) => {
     closeMoveSheet();
     const from = moveFrom ?? tote.position;
     const to = other.position;
-    const me = toteRef.current;
-    if (me.position !== from) {
-      toast.error(
-        `“${me.name}” was moved on the other phone, so nothing was swapped.`
-      );
-      return;
-    }
-    if (toteAt(to)?.id !== other.id) {
-      toast.error(
-        `“${other.name}” was moved on the other phone, so nothing was swapped.`
-      );
-      return;
-    }
+    const me = { id: tote.id, name: tote.name };
     try {
-      await swapTotes(tote.id, other.id);
+      await swapTotes(me.id, other.id, { expectA: from, expectB: to });
       const { path } = describePosition(to);
       toast.show(`Swapped with “${other.name}” — now in ${path}`, {
         actionLabel: "Undo",
         // Positions only, so item edits made meanwhile on either tote are
-        // untouched — but only while both are still where the swap put them
-        onAction: () => {
-          if (toteAt(to)?.id !== tote.id || toteAt(from)?.id !== other.id) {
-            toast.error(
-              `Can't undo — “${me.name}” or “${other.name}” was moved since.`
-            );
-            return Promise.resolve();
-          }
-          return swapTotes(tote.id, other.id).catch((err) =>
-            toast.error(err.message)
-          );
-        },
+        // untouched
+        onAction: () =>
+          swapTotes(me.id, other.id, { expectA: to, expectB: from }).catch(
+            (err) =>
+              toast.error(
+                err?.code === "TOTE_MOVED"
+                  ? `Can't undo — “${me.name}” or “${other.name}” was moved since.`
+                  : err.message
+              )
+          ),
       });
     } catch (err) {
       toast.error(err.message);

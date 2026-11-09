@@ -163,6 +163,40 @@ describe("RecentlyDeletedSheet: removed items", () => {
     expect(screen.queryByText("Roller")).not.toBeInTheDocument();
   });
 
+  it("hides entries whose item now lives in ANY tote (moved on after an Undo) — including when the original tote is gone", async () => {
+    const movedOn = binEntry(1, "Paint", { id: 10, name: "Roller" }); // now in Tools
+    const homeless = binEntry(99, "Old tote", { id: 11, name: "Brush" }); // tote gone, item nowhere
+    const adopted = binEntry(99, "Old tote", { id: 12, name: "Tray" }); // tote gone, item in Tools
+    setup({
+      totes: [
+        tote(1, "A1", "Paint"),
+        tote(2, "B1", "Tools", [{ id: 10, name: "Roller" }, { id: 12, name: "Tray" }]),
+      ],
+      removed: [movedOn, homeless, adopted],
+    });
+    expect(await screen.findByText("Brush")).toBeInTheDocument();
+    expect(screen.queryByText("Roller")).not.toBeInTheDocument();
+    expect(screen.queryByText("Tray")).not.toBeInTheDocument();
+  });
+
+  it("ALREADY_THERE on Put back (the item got a home before this phone caught up): the entry goes, a plain toast says where it is", async () => {
+    const user = userEvent.setup();
+    setup({
+      totes: [tote(1, "A1", "Paint")],
+      removed: [binEntry(1, "Paint", { id: 10, name: "Roller" })],
+      overrides: {
+        restoreRemovedItem: vi
+          .fn()
+          .mockRejectedValue(codeError("“Roller” is already in “Tools”.", "ALREADY_THERE")),
+      },
+    });
+    await user.click(await screen.findByRole("button", { name: "Put back Roller" }));
+    await waitFor(() => expect(screen.queryByText("Roller")).not.toBeInTheDocument());
+    expect(state.toast.show).toHaveBeenCalledWith("“Roller” is already in “Tools”.");
+    expect(state.toast.error).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: /which tote/ })).not.toBeInTheDocument();
+  });
+
   it("compares ids by type: a string id does not hide a numeric one", async () => {
     setup({
       totes: [tote(1, "A1", "Paint", [{ id: "10", name: "Other" }])],

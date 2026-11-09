@@ -13,6 +13,7 @@ import {
   REMOVED_ITEMS_POSITION,
   RESERVED_PREFIX,
   appendRemovedEntries,
+  dropRemovedEntriesFor,
   isExpired,
   isReservedPosition,
   isTombstonePosition,
@@ -22,6 +23,7 @@ import {
   toDeletedEntry,
   tombstonePosition,
 } from "../utils/reservedRows";
+import { applyTagDelta, diffTags, isEmptyDelta, sameTags } from "../utils/tagOps";
 import {
   normalizeNotes,
   normalizeTags,
@@ -182,6 +184,10 @@ function enqueueWrite(key, task) {
 // other phone wrote first (each retry re-applies the same idempotent op).
 const CAS_ATTEMPTS = 3;
 
+// SQLSTATE raised by swap_tote_positions() when a tote is not at the spot
+// the caller expected (see supabase/migrations/20261108_tags_notes_swap.sql).
+const SWAP_MOVED_SQLSTATE = "GT001";
+
 /**
  * Fresh updated_at that is strictly later than the one we read. Guards the
  * compare-and-swap against clock skew between phones: if the stamp didn't
@@ -201,12 +207,20 @@ function nextStamp(previous) {
  *   NO_TOMBSTONE   nothing to restore (already purged or never soft-deleted)
  *   SLOT_TAKEN     the spot to restore into is occupied — offer a picker
  *   TOTE_GONE      the tote a removed item came from no longer exists
+ *   ALREADY_THERE  the removed item already lives in a tote (details:
+ *                  { toteId, toteName }) — its bin entry has been dropped
+ *   NOTES_CHANGED  the note changed on the other phone since the editor
+ *                  opened (details: { theirs }) — nothing was written
+ *   TOTE_MOVED     a tote to swap is no longer where the user saw it —
+ *                  nothing was swapped
+ * `details` carries what the caller needs to act on the code.
  */
 export class UserFacingError extends Error {
-  constructor(message, { code } = {}) {
+  constructor(message, { code, details } = {}) {
     super(message);
     this.name = "UserFacingError";
     if (code) this.code = code;
+    if (details !== undefined) this.details = details;
   }
 }
 
@@ -416,6 +430,107 @@ async function isLiveTote(id) {
   } catch (err) {
     throw friendlyError(err, "find the tote");
   }
+}
+
+/**
+ * The live tote (not a reserved row) that holds an item with exactly this
+ * id, as { id, name } — or null. Reads the FRESH rows, not the store: a
+ * removed item that was put back or moved on the other phone must not get
+ * a second home. Ids keep their types (7 is not "7").
+ */
+async function findLiveToteHolding(itemId) {
+  const holds = (row) =>
+    !isReservedPosition(row?.position) &&
+    Array.isArray(row?.items) &&
+    row.items.some((it) => it && it.id === itemId);
+  if (!supabase) {
+    const hit = getLocalTotes().find(holds);
+    return hit ? { id: hit.id, name: hit.name } : null;
+  }
+  try {
+    const { data, error } = await supabase
+      .from("totes")
+      .select("id, name, position, items")
+      .not("position", "match", `^${RESERVED_PREFIX}`);
+    if (error) throw error;
+    const hit = (Array.isArray(data) ? data : []).find(holds);
+    return hit ? { id: hit.id, name: hit.name } : null;
+  } catch (err) {
+    throw friendlyError(err, "find the item");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Field writes (tags, notes)
+// ---------------------------------------------------------------------------
+
+/**
+ * Read-modify-write for a tote's own fields, within the tote scope and as a
+ * compare-and-swap on updated_at — the same shape as applyItemsOp. `mutate`
+ * gets the FRESH row and returns the fields to write, or null when there is
+ * nothing to write (the row as read is then returned unchanged). It may
+ * throw a UserFacingError (a conflict, a validation failure) to refuse.
+ *
+ * Why not a plain patch: in a garage with patchy signal the store can be
+ * tens of seconds behind (the channel reconnecting with backoff). A full-
+ * value tag or note write computed against that store would silently wipe
+ * what the other phone saved meanwhile. Here the merge happens against what
+ * the database holds at write time, and a write that lost the race is
+ * re-read and re-applied.
+ */
+function applyFieldsOp(id, mutate) {
+  return enqueueWrite(id, async () => {
+    // ---------- local mode ----------
+    if (!supabase) {
+      const totes = getLocalTotes();
+      const idx = totes.findIndex((t) => t.id === id);
+      if (idx < 0 || isReservedPosition(totes[idx].position)) {
+        throw new UserFacingError(NOT_FOUND_MESSAGE);
+      }
+      const patch = mutate(totes[idx]);
+      if (!patch) return totes[idx];
+      totes[idx] = { ...totes[idx], ...patch, updated_at: new Date().toISOString() };
+      saveLocalTotes(totes);
+      return totes[idx];
+    }
+
+    // ---------- cloud mode (compare-and-swap) ----------
+    try {
+      for (let attempt = 0; attempt < CAS_ATTEMPTS; attempt++) {
+        const { data: row, error: readErr } = await supabase
+          .from("totes")
+          .select("*")
+          .eq("id", id)
+          .maybeSingle();
+        if (readErr) throw readErr;
+        if (!row || isReservedPosition(row.position)) {
+          throw new UserFacingError(NOT_FOUND_MESSAGE);
+        }
+
+        const patch = mutate(row);
+        if (!patch) return row;
+
+        let query = supabase
+          .from("totes")
+          .update({ ...patch, updated_at: nextStamp(row.updated_at) })
+          .eq("id", id)
+          .not("position", "match", `^${RESERVED_PREFIX}`);
+        // Only land if nobody else wrote since we read
+        query =
+          row.updated_at === null || row.updated_at === undefined
+            ? query.is("updated_at", null)
+            : query.eq("updated_at", row.updated_at);
+        const { data, error } = await query.select();
+        if (error) throw error;
+        if (Array.isArray(data) && data.length > 0) return data[0];
+        // Lost the race — loop re-reads the other phone's copy and
+        // re-applies on top of it.
+      }
+      throw new UserFacingError(BUSY_MESSAGE);
+    } catch (err) {
+      throw friendlyError(err, "save your changes");
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -704,6 +819,79 @@ export const toteService = {
       } catch (err) {
         throw friendlyError(err, "save your changes");
       }
+    });
+  },
+
+  /**
+   * Edit a tote's tags by DELTA (see utils/tagOps): `added` and `removed`
+   * are applied to the tags as they are stored right now, with a compare-
+   * and-swap on updated_at — so a tag the other phone added while our store
+   * was behind is kept, never wiped by a full-list write. Tags the other
+   * phone already has (in any case) are not duplicated.
+   *
+   * @param {number|string} id
+   * @param {{ added?: string[], removed?: string[] }} delta
+   * @returns {{ tote, applied: { added: string[], removed: string[] } }}
+   *   the saved row and what this write REALLY changed (a tag they had
+   *   already added isn't ours to take back on Undo). `applied` is empty
+   *   when nothing needed writing.
+   * @throws SETUP_NEEDED until the SQL script has been run; the tag
+   *   validation message when the merged list breaks a limit
+   */
+  async updateTags(id, delta) {
+    assertCapability("tags");
+    const wanted = {
+      added: normalizeTags(delta?.added),
+      removed: Array.isArray(delta?.removed) ? delta.removed : [],
+    };
+    let applied = { added: [], removed: [] };
+    if (isEmptyDelta(wanted)) {
+      // Nothing to do, but the caller still gets the fresh row
+      const tote = await applyFieldsOp(id, () => null);
+      return { tote, applied };
+    }
+    const tote = await applyFieldsOp(id, (row) => {
+      const current = normalizeTags(row.tags);
+      const merged = applyTagDelta(current, wanted);
+      applied = diffTags(current, merged);
+      if (sameTags(merged, current)) return null; // the other phone already did it
+      const check = validateTags(merged);
+      if (!check.valid) throw new UserFacingError(check.error);
+      return { tags: merged };
+    });
+    return { tote, applied };
+  },
+
+  /**
+   * Save a tote's note, refusing to overwrite a note that changed since the
+   * editor opened. `expected` is the (normalized) note the editor opened on;
+   * when the STORED note differs from it the write is refused with code
+   * NOTES_CHANGED and details.theirs = the stored note, so the UI can show
+   * the other phone's text and let the user choose (then call again with
+   * `expected` set to that text). Without `expected` the note is replaced.
+   * Compared and written against the fresh row (compare-and-swap), so the
+   * other phone's save during a reconnect is seen, not only one the store
+   * already knows about. A note identical to the stored one writes nothing.
+   *
+   * @returns the saved row
+   */
+  async updateNotes(id, notes, { expected } = {}) {
+    assertCapability("notes");
+    const next = normalizeNotes(notes);
+    const check = validateNotes(next);
+    if (!check.valid) throw new UserFacingError(check.error);
+    const checkExpected = expected !== undefined;
+    const wanted = checkExpected ? normalizeNotes(expected) : null;
+    return applyFieldsOp(id, (row) => {
+      const theirs = normalizeNotes(row.notes);
+      if (theirs === next) return null; // already says this
+      if (checkExpected && theirs !== wanted) {
+        throw new UserFacingError(
+          "The other phone changed this note while you were editing.",
+          { code: "NOTES_CHANGED", details: { theirs } }
+        );
+      }
+      return { notes: next };
     });
   },
 
@@ -1006,13 +1194,40 @@ export const toteService = {
    * Swap the positions of two totes in one step. Cloud mode calls the
    * swap_tote_positions() database function (one transaction, UNIQUE-safe);
    * until the SQL script has been run this throws the setup error.
+   *
+   * `expectA` / `expectB` are the spots the user SAW the totes in when they
+   * confirmed the trade. The swap trades whatever spots the rows hold at
+   * call time, so if either tote was moved on the other phone meanwhile
+   * (and this phone's store hadn't caught up) the trade would be a different
+   * one than the one confirmed — it is refused with code TOTE_MOVED instead,
+   * and nothing is written. Checked against the FRESH rows here (for a
+   * message with the tote's name) and again inside the database function,
+   * under its row locks, so there is no window between.
+   *
    * @returns {[toteA, toteB]} both rows with fresh updated_at
    */
-  async swapTotes(aId, bId) {
+  async swapTotes(aId, bId, { expectA, expectB } = {}) {
     if (aId === null || aId === undefined || bId === null || bId === undefined || aId === bId) {
       throw new UserFacingError("Pick two different totes to swap.");
     }
     assertCapability("swap");
+    const expected = [
+      [aId, typeof expectA === "string" ? expectA : null],
+      [bId, typeof expectB === "string" ? expectB : null],
+    ];
+    const movedError = (name) =>
+      new UserFacingError(
+        `“${name}” was moved on the other phone, so nothing was swapped.`,
+        { code: "TOTE_MOVED" }
+      );
+    /** Refuse when a row is not where the user saw it. */
+    const assertWhereExpected = (rows) => {
+      expected.forEach(([id, want]) => {
+        if (want === null) return;
+        const row = rows.find((r) => r.id === id);
+        if (row && row.position !== want) throw movedError(row.name);
+      });
+    };
 
     // Hold both per-tote queues in a fixed order (no deadlock with a
     // concurrent swap of the same pair the other way round).
@@ -1035,6 +1250,7 @@ export const toteService = {
           ) {
             throw new UserFacingError("Those totes can't be swapped.");
           }
+          assertWhereExpected([totes[ia], totes[ib]]);
           const stamp = new Date().toISOString();
           const positionA = totes[ia].position;
           totes[ia] = { ...totes[ia], position: totes[ib].position, updated_at: stamp };
@@ -1044,10 +1260,26 @@ export const toteService = {
         }
 
         // ---------- cloud mode ----------
+        let current = [];
         try {
+          // Fresh positions first: a friendly refusal with the tote's name
+          // (the function's own check is the race-free one)
+          const { data: fresh, error: readErr } = await supabase
+            .from("totes")
+            .select("id, name, position")
+            .in("id", [aId, bId]);
+          if (readErr) throw readErr;
+          current = Array.isArray(fresh) ? fresh : [];
+          if (current.length < 2) {
+            throw new UserFacingError("One of those totes no longer exists.");
+          }
+          assertWhereExpected(current);
+
           const { data, error } = await supabase.rpc("swap_tote_positions", {
             a_id: aId,
             b_id: bId,
+            expect_a: expected[0][1],
+            expect_b: expected[1][1],
           });
           if (error) throw error;
           const rows = Array.isArray(data) ? data : data ? [data] : [];
@@ -1063,6 +1295,15 @@ export const toteService = {
           }
           if (err?.code === "22023") {
             throw new UserFacingError("Those totes can't be swapped.");
+          }
+          if (err?.code === SWAP_MOVED_SQLSTATE) {
+            // Moved between our read and the function's lock — rare; the
+            // function doesn't say which one, so name both
+            const names = current.map((r) => `“${r.name}”`).join(" or ");
+            throw new UserFacingError(
+              `${names || "A tote"} was moved on the other phone, so nothing was swapped.`,
+              { code: "TOTE_MOVED" }
+            );
           }
           throw friendlyError(err, "swap the totes");
         }
@@ -1117,10 +1358,39 @@ export const toteService = {
   },
 
   /**
+   * Forget the bin entries about `itemIds` removed from tote `toteId` — an
+   * Undo put them back, so the entries are stale (left behind, they would
+   * offer "Put back" once the item moves on to another tote, giving it two
+   * homes). Best effort by design: resolves to the number of bin rows
+   * touched, and a missing bin is simply 0. Never touches a tote.
+   */
+  async forgetRemovedItems(toteId, itemIds) {
+    const ids = Array.isArray(itemIds) ? itemIds : [];
+    if (ids.length === 0) return 0;
+    const rows = await readRemovedItemsRows();
+    const op = dropRemovedEntriesFor(toteId, ids);
+    let touched = 0;
+    for (const row of rows) {
+      const entries = Array.isArray(row.items) ? row.items : [];
+      if (op(entries).length === entries.length) continue;
+      await applyItemsOp(row.id, op, ITEM_SCOPES.bin);
+      touched += 1;
+    }
+    return touched;
+  },
+
+  /**
    * Put a removed item back: into the tote it came from when that still
    * exists, otherwise into `targetToteId`. Then drops the bin entry.
+   *
+   * Before adding, the FRESH rows are checked for an item with the same id
+   * in any live tote (the Undo of the removal put it back, or it was moved
+   * on since): the item is never given a second home. The stale bin entry
+   * is dropped and ALREADY_THERE says where it is.
    * @throws {UserFacingError} TOTE_GONE when the original tote is gone and
-   *   no target was given — the caller should offer a tote picker
+   *   no target was given — the caller should offer a tote picker;
+   *   ALREADY_THERE (details { toteId, toteName }) when the item is already
+   *   in a tote — nothing was added, the entry is gone
    * @returns the saved target tote
    */
   async restoreRemovedItem(entryId, targetToteId) {
@@ -1141,6 +1411,18 @@ export const toteService = {
       throw new UserFacingError("That item is no longer in the bin.", {
         code: "NO_TOMBSTONE",
       });
+    }
+
+    const home = await findLiveToteHolding(entry.item.id);
+    if (home) {
+      // Best effort: the entry is stale either way
+      await applyItemsOp(holder.id, removeItem(entryId), ITEM_SCOPES.bin).catch(
+        () => {}
+      );
+      throw new UserFacingError(
+        `“${entry.item.name || "That item"}” is already in “${home.name}”.`,
+        { code: "ALREADY_THERE", details: { toteId: home.id, toteName: home.name } }
+      );
     }
 
     let target = null;

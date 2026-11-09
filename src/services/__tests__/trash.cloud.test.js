@@ -173,11 +173,11 @@ describe("tags and notes", () => {
 });
 
 describe("swapTotes", () => {
-  it("calls swap_tote_positions with both ids and returns [a, b] swapped", async () => {
+  it("calls swap_tote_positions with both ids (no expectations when none given) and returns [a, b] swapped", async () => {
     const { state } = await setup([withCols(camping), withCols(sports)], { rpc: fakeSwapRpc });
     const [a, b] = await toteService.swapTotes(2, 1);
     expect(state.rpcCalls).toEqual([
-      { fn: "swap_tote_positions", args: { a_id: 2, b_id: 1 } },
+      { fn: "swap_tote_positions", args: { a_id: 2, b_id: 1, expect_a: null, expect_b: null } },
     ]);
     expect(a.id).toBe(2);
     expect(a.position).toBe("B3");
@@ -188,9 +188,291 @@ describe("swapTotes", () => {
   });
 
   it("refuses the same tote twice and surfaces a missing tote", async () => {
-    await setup([withCols(camping), withCols(sports)], { rpc: fakeSwapRpc });
+    const { state } = await setup([withCols(camping), withCols(sports)], { rpc: fakeSwapRpc });
     await expect(toteService.swapTotes(1, 1)).rejects.toThrow(/two different totes/i);
     await expect(toteService.swapTotes(1, 99)).rejects.toThrow(/no longer exists/i);
+    expect(state.rpcCalls).toHaveLength(0); // the fresh read already said so
+  });
+
+  it("with the spots the user saw: refuses (TOTE_MOVED, naming the tote) before calling the function when a tote is elsewhere NOW — even though this phone's copy still had it there", async () => {
+    // The other phone moved Sports from C4 to A1; this phone never heard
+    // (channel reconnecting), so the user confirmed "swap with Sports (C4)"
+    const { state } = await setup(
+      [withCols(camping), withCols({ ...sports, position: "A1" })],
+      { rpc: fakeSwapRpc }
+    );
+    await expect(
+      toteService.swapTotes(1, 2, { expectA: "B3", expectB: "C4" })
+    ).rejects.toMatchObject({
+      code: "TOTE_MOVED",
+      message: "“Sports” was moved on the other phone, so nothing was swapped.",
+    });
+    expect(state.rpcCalls).toHaveLength(0);
+    expect(state.updates).toHaveLength(0);
+    expect(state.rows.map((r) => r.position)).toEqual(["B3", "A1"]);
+
+    // Our own tote moved → named too
+    await expect(
+      toteService.swapTotes(1, 2, { expectA: "C4", expectB: "A1" })
+    ).rejects.toThrow(/“Camping Gear” was moved/);
+    expect(state.rpcCalls).toHaveLength(0);
+
+    // Right spots → the expectations travel to the function (checked again under its locks)
+    const [a, b] = await toteService.swapTotes(1, 2, { expectA: "B3", expectB: "A1" });
+    expect(state.rpcCalls).toEqual([
+      { fn: "swap_tote_positions", args: { a_id: 1, b_id: 2, expect_a: "B3", expect_b: "A1" } },
+    ]);
+    expect(a.position).toBe("A1");
+    expect(b.position).toBe("B3");
+  });
+
+  it("a tote moved between our read and the function's lock: the function refuses (SQLSTATE GT001) → TOTE_MOVED, nothing swapped", async () => {
+    const { state } = await setup([withCols(camping), withCols(sports)], {
+      rpc: (fn, args, st) => {
+        st.rows.find((r) => r.id === 2).position = "A1"; // the other phone, just now
+        return fakeSwapRpc(fn, args, st);
+      },
+    });
+    await expect(
+      toteService.swapTotes(1, 2, { expectA: "B3", expectB: "C4" })
+    ).rejects.toMatchObject({ code: "TOTE_MOVED", message: /was moved on the other phone/ });
+    expect(state.rpcCalls).toHaveLength(1);
+    expect(state.rows.find((r) => r.id === 1).position).toBe("B3");
+    expect(state.rows.find((r) => r.id === 2).position).toBe("A1");
+  });
+});
+
+describe("tags and notes are merged against the STORED row, not this phone's copy", () => {
+  it("updateTags adds on top of a tag the other phone saved while this phone was behind, as a compare-and-swap, and reports only what it changed", async () => {
+    // The database already has "Xmas" from the other phone; the caller's
+    // store (from before the channel dropped) knows nothing about it
+    const { state } = await setup([withCols({ ...camping, tags: ["Xmas"] })]);
+    const { tote, applied } = await toteService.updateTags(1, { added: ["Lights"], removed: [] });
+    expect(tote.tags).toEqual(["Xmas", "Lights"]);
+    expect(applied).toEqual({ added: ["Lights"], removed: [] });
+    expect(state.updates).toHaveLength(1);
+    expect(Object.keys(state.updates[0].payload).sort()).toEqual(["tags", "updated_at"]);
+    expect(state.updates[0].filters).toEqual([
+      ["eq", "id", 1],
+      ["not_match", "position", "^__"],
+      ["eq", "updated_at", T0],
+    ]);
+    expect(new Date(tote.updated_at) > new Date(T0)).toBe(true);
+  });
+
+  it("updateTags: a tag they already have (any case) is neither duplicated nor claimed; a delta that changes nothing writes nothing", async () => {
+    const { state } = await setup([withCols({ ...camping, tags: ["winter", "Fragile"] })]);
+    const first = await toteService.updateTags(1, { added: ["fragile", "kids"], removed: [] });
+    expect(first.tote.tags).toEqual(["winter", "Fragile", "kids"]);
+    expect(first.applied).toEqual({ added: ["kids"], removed: [] });
+
+    const again = await toteService.updateTags(1, { added: ["KIDS"], removed: ["nothing-here"] });
+    expect(again.applied).toEqual({ added: [], removed: [] });
+    expect(again.tote.tags).toEqual(["winter", "Fragile", "kids"]);
+    expect(state.updates).toHaveLength(1);
+
+    const empty = await toteService.updateTags(1, { added: [], removed: [] });
+    expect(empty.applied).toEqual({ added: [], removed: [] });
+    expect(empty.tote.id).toBe(1);
+    expect(state.updates).toHaveLength(1);
+  });
+
+  it("updateTags re-applies the delta when the other phone wrote between our read and our write (lost compare-and-swap → re-read)", async () => {
+    let raced = false;
+    const { state } = await setup([withCols(camping)], {
+      beforeUpdate: (st) => {
+        if (raced) return;
+        raced = true;
+        const row = st.rows.find((r) => r.id === 1);
+        row.tags = ["Xmas"];
+        row.updated_at = new Date(Date.now() + 500).toISOString();
+      },
+    });
+    const { tote, applied } = await toteService.updateTags(1, { added: ["Lights"], removed: [] });
+    expect(tote.tags).toEqual(["Xmas", "Lights"]); // theirs kept, ours on top
+    expect(applied).toEqual({ added: ["Lights"], removed: [] });
+    expect(state.updates).toHaveLength(2); // the first write missed
+    expect(state.rows[0].tags).toEqual(["Xmas", "Lights"]);
+  });
+
+  it("updateTags validates the MERGED list (their tags + ours) and sends nothing when it breaks a limit", async () => {
+    const nine = Array.from({ length: 9 }, (_, i) => `t${i}`);
+    const { state } = await setup([withCols({ ...camping, tags: nine })]);
+    await expect(
+      toteService.updateTags(1, { added: ["a", "b"], removed: [] })
+    ).rejects.toThrow(/up to 10 tags/i);
+    expect(state.updates).toHaveLength(0);
+    // Removing first makes room
+    const { tote } = await toteService.updateTags(1, { added: ["a", "b"], removed: ["t0"] });
+    expect(tote.tags).toHaveLength(10);
+  });
+
+  it("updateTags / updateNotes throw the setup error (and write nothing) while the columns are missing", async () => {
+    const { state } = await setup([camping]);
+    await expect(toteService.updateTags(1, { added: ["x"] })).rejects.toMatchObject({
+      code: "SETUP_NEEDED",
+    });
+    await expect(toteService.updateNotes(1, "x")).rejects.toMatchObject({ code: "SETUP_NEEDED" });
+    expect(state.updates).toHaveLength(0);
+  });
+
+  it("updateTags / updateNotes never touch a tombstone or an unknown id", async () => {
+    const tomb = withCols({ ...camping, position: "__deleted__:B3:1", updated_at: daysAgo(1) });
+    const { state } = await setup([tomb, withCols(sports)]);
+    await expect(toteService.updateTags(1, { added: ["x"] })).rejects.toThrow(/find that tote/i);
+    await expect(toteService.updateNotes(1, "x")).rejects.toThrow(/find that tote/i);
+    await expect(toteService.updateNotes(99, "x")).rejects.toThrow(/find that tote/i);
+    expect(state.updates).toHaveLength(0);
+  });
+
+  it("updateNotes writes only while the STORED note is still the one the editor opened on; otherwise NOTES_CHANGED carries their text and nothing is written", async () => {
+    // The other phone saved "lid cracked"; this phone's store still says
+    // "Fragile", so its editor opened on "Fragile"
+    const { state } = await setup([withCols({ ...camping, notes: "lid cracked" })]);
+    await expect(
+      toteService.updateNotes(1, "Fragile glass", { expected: "Fragile" })
+    ).rejects.toMatchObject({
+      code: "NOTES_CHANGED",
+      details: { theirs: "lid cracked" },
+    });
+    expect(state.updates).toHaveLength(0);
+
+    // The user saw theirs and chose to replace it
+    const saved = await toteService.updateNotes(1, "Fragile glass", { expected: "lid cracked" });
+    expect(saved.notes).toBe("Fragile glass");
+    expect(state.updates).toHaveLength(1);
+    expect(Object.keys(state.updates[0].payload).sort()).toEqual(["notes", "updated_at"]);
+    expect(state.updates[0].filters).toContainEqual(["eq", "updated_at", T0]);
+    expect(state.updates[0].filters).toContainEqual(["not_match", "position", "^__"]);
+  });
+
+  it("updateNotes: null means 'opened on no note'; a note the row already has writes nothing; without `expected` it replaces; blanks are stored as null", async () => {
+    const { state } = await setup([withCols(camping)]); // notes: null
+    await expect(
+      toteService.updateNotes(1, "x", { expected: "something" })
+    ).rejects.toMatchObject({ code: "NOTES_CHANGED", details: { theirs: null } });
+    const first = await toteService.updateNotes(1, "  lid cracked \r\n", { expected: null });
+    expect(first.notes).toBe("lid cracked");
+    expect(state.updates).toHaveLength(1);
+
+    const same = await toteService.updateNotes(1, "lid cracked", { expected: "whatever" });
+    expect(same.notes).toBe("lid cracked"); // already says this: no conflict, no write
+    expect(state.updates).toHaveLength(1);
+
+    const replaced = await toteService.updateNotes(1, "   ");
+    expect(replaced.notes).toBeNull();
+    expect(state.updates).toHaveLength(2);
+    expect(state.updates[1].payload.notes).toBeNull();
+
+    await expect(toteService.updateNotes(1, "x".repeat(501))).rejects.toThrow(/500 characters/i);
+    expect(state.updates).toHaveLength(2);
+  });
+});
+
+describe("removed-items bin: an item never gets two homes", () => {
+  const entryFor = (toteId, toteName, position, item, age = daysAgo(1)) => ({
+    id: `${toteId}:${item.id}:${age}`,
+    item,
+    toteId,
+    toteName,
+    position,
+    removedAt: age,
+  });
+  const binRow = (entries, id = 50) => ({
+    id,
+    name: "bin",
+    position: "__removed_items__",
+    items: entries,
+    created_at: T0,
+    updated_at: T0,
+  });
+
+  it("forgetRemovedItems drops only the entries for those items from that tote — ids compared by type — and is scoped to the bin row", async () => {
+    const keepStringSeven = entryFor(1, "Camping Gear", "B3", { id: "7", name: "Rope (string id)" });
+    const keepOtherTote = entryFor(2, "Sports", "C4", lantern);
+    const bin = binRow([
+      entryFor(1, "Camping Gear", "B3", lantern),
+      entryFor(1, "Camping Gear", "B3", rope), // numeric 7
+      keepStringSeven,
+      keepOtherTote,
+    ]);
+    const { state } = await setup([camping, sports, bin]);
+
+    expect(await toteService.forgetRemovedItems(1, ["i1", 7])).toBe(1);
+    const left = state.rows.find((r) => r.id === 50).items;
+    expect(left.map((e) => e.id)).toEqual([keepStringSeven.id, keepOtherTote.id]);
+    expect(state.updates).toHaveLength(1);
+    expect(state.updates[0].filters).toContainEqual(["eq", "position", "__removed_items__"]);
+    expect(state.updates[0].filters).not.toContainEqual(["not_match", "position", "^__"]);
+    // Totes untouched
+    expect(state.rows.find((r) => r.id === 1).items).toEqual([lantern, rope]);
+
+    // Nothing left to forget → no write
+    expect(await toteService.forgetRemovedItems(1, ["i1", 7])).toBe(0);
+    expect(await toteService.forgetRemovedItems(1, [])).toBe(0);
+    expect(state.updates).toHaveLength(1);
+  });
+
+  it("forgetRemovedItems with no bin row at all is a quiet no-op", async () => {
+    const { state } = await setup([camping]);
+    expect(await toteService.forgetRemovedItems(1, ["i1"])).toBe(0);
+    expect(state.updates).toHaveLength(0);
+    expect(state.inserts).toHaveLength(0);
+  });
+
+  it("remove → Undo → move → Put back: the item already lives in another tote, so nothing is added (ALREADY_THERE says where) and the stale entry is dropped", async () => {
+    // Lantern was removed from Camping (entry recorded), Undo put it back
+    // (the entry survived, say the forget failed offline), then it was
+    // MOVED to Sports. Now someone taps "Put back" on the stale entry.
+    const entry = entryFor(1, "Camping Gear", "B3", lantern);
+    const { state } = await setup([
+      { ...camping, items: [rope] },
+      { ...sports, items: [lantern] },
+      binRow([entry]),
+    ]);
+    await expect(toteService.restoreRemovedItem(entry.id)).rejects.toMatchObject({
+      code: "ALREADY_THERE",
+      message: "“Lantern” is already in “Sports”.",
+      details: { toteId: 2, toteName: "Sports" },
+    });
+    // One home only; the only write was the bin clean-up
+    expect(state.rows.find((r) => r.id === 1).items).toEqual([rope]);
+    expect(state.rows.find((r) => r.id === 2).items).toEqual([lantern]);
+    expect(state.rows.find((r) => r.id === 50).items).toEqual([]);
+    expect(state.updates).toHaveLength(1);
+    expect(state.updates[0].filters).toContainEqual(["eq", "position", "__removed_items__"]);
+    expect(await toteService.listRemovedItems()).toEqual([]);
+  });
+
+  it("ids are compared by type: a tote holding item \"7\" does not block putting back item 7", async () => {
+    const entry = entryFor(1, "Camping Gear", "B3", rope); // numeric 7
+    const { state } = await setup([
+      { ...camping, items: [lantern] },
+      { ...sports, items: [{ id: "7", name: "Other rope" }] },
+      binRow([entry]),
+    ]);
+    const saved = await toteService.restoreRemovedItem(entry.id);
+    expect(saved.id).toBe(1);
+    expect(saved.items).toEqual([lantern, rope]);
+    expect(state.rows.find((r) => r.id === 2).items).toEqual([{ id: "7", name: "Other rope" }]);
+  });
+
+  it("the TOTE_GONE retry: the original tote is gone and the item was already put into a picked tote (an earlier put-back whose entry drop failed) → ALREADY_THERE, no duplicate", async () => {
+    const entry = entryFor(1, "Camping Gear", "B3", lantern);
+    const tomb = { ...camping, items: [rope], position: "__deleted__:B3:1", updated_at: daysAgo(1) };
+    const { state } = await setup([tomb, { ...sports, items: [lantern] }, binRow([entry])]);
+    await expect(toteService.restoreRemovedItem(entry.id, 2)).rejects.toMatchObject({
+      code: "ALREADY_THERE",
+      details: { toteId: 2 },
+    });
+    expect(state.rows.find((r) => r.id === 2).items).toEqual([lantern]); // still exactly one
+    expect(state.rows.find((r) => r.id === 50).items).toEqual([]);
+    // An item in a TOMBSTONE doesn't count as having a home
+    const entry2 = entryFor(1, "Camping Gear", "B3", rope);
+    state.rows.find((r) => r.id === 50).items = [entry2];
+    await expect(toteService.restoreRemovedItem(entry2.id)).rejects.toMatchObject({ code: "TOTE_GONE" });
+    const saved = await toteService.restoreRemovedItem(entry2.id, 2);
+    expect(saved.items).toEqual([lantern, rope]);
   });
 });
 

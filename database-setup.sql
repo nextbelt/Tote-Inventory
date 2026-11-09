@@ -29,7 +29,16 @@ CREATE INDEX idx_totes_position ON totes (position);
 
 -- Swap two totes' positions in one transaction (never violates UNIQUE).
 -- Kept in sync with supabase/migrations/20261108_tags_notes_swap.sql.
-CREATE OR REPLACE FUNCTION public.swap_tote_positions(a_id bigint, b_id bigint)
+-- An earlier version of this function took two arguments; PostgREST
+-- cannot choose between two overloads, so that one is removed first.
+DROP FUNCTION IF EXISTS public.swap_tote_positions(bigint, bigint);
+
+CREATE OR REPLACE FUNCTION public.swap_tote_positions(
+  a_id     bigint,
+  b_id     bigint,
+  expect_a text DEFAULT NULL,
+  expect_b text DEFAULT NULL
+)
 RETURNS SETOF public.totes
 LANGUAGE plpgsql
 SECURITY INVOKER
@@ -68,6 +77,17 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
+  -- The caller says where it SAW each tote (NULL = don't check). Compared
+  -- here, under the row locks, so a tote the other phone moved a moment
+  -- ago can never be traded from a spot the user didn't confirm.
+  IF (expect_a IS NOT NULL AND expect_a IS DISTINCT FROM
+        CASE WHEN a_id = lo_id THEN lo_pos ELSE hi_pos END)
+  OR (expect_b IS NOT NULL AND expect_b IS DISTINCT FROM
+        CASE WHEN b_id = lo_id THEN lo_pos ELSE hi_pos END) THEN
+    RAISE EXCEPTION 'swap_tote_positions: a tote is not at the expected position'
+      USING ERRCODE = 'GT001'; -- app-defined: the app says "moved on the other phone"
+  END IF;
+
   tmp_pos := '__swap__:' || lo_id::text || ':' || hi_id::text || ':'
              || to_char(clock_timestamp(), 'YYYYMMDDHH24MISSUS');
 
@@ -80,7 +100,7 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.swap_tote_positions(bigint, bigint)
+GRANT EXECUTE ON FUNCTION public.swap_tote_positions(bigint, bigint, text, text)
   TO anon, authenticated;
 
 -- Row Level Security

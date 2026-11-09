@@ -193,13 +193,17 @@ export function makeFakeSupabase(rows, options = {}) {
   return { client, state };
 }
 
-/** Reference implementation of swap_tote_positions() for the fake. */
-export function fakeSwapRpc(fn, { a_id, b_id }, state) {
+/** Reference implementation of swap_tote_positions() for the fake, incl.
+ *  the optional expected positions (SQLSTATE GT001 when a tote moved). */
+export function fakeSwapRpc(fn, { a_id, b_id, expect_a = null, expect_b = null }, state) {
   const a = state.rows.find((r) => r.id === a_id);
   const b = state.rows.find((r) => r.id === b_id);
   if (!a || !b) return { data: null, error: { code: "P0002", message: "not found" } };
   if (a.position.startsWith("__") || b.position.startsWith("__")) {
     return { data: null, error: { code: "22023", message: "reserved" } };
+  }
+  if ((expect_a !== null && a.position !== expect_a) || (expect_b !== null && b.position !== expect_b)) {
+    return { data: null, error: { code: "GT001", message: "a tote is not where expected" } };
   }
   const stamp = new Date().toISOString();
   [a.position, b.position] = [b.position, a.position];

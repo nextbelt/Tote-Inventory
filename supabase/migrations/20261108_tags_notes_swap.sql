@@ -7,8 +7,12 @@
 -- What it does
 --   1. totes.tags   text[]  NOT NULL DEFAULT '{}'   (e.g. {Holiday,Camping})
 --   2. totes.notes  text    up to 500 characters   (e.g. "lid cracked")
---   3. swap_tote_positions(a_id, b_id) — swaps two totes' spots in ONE
---      transaction so UNIQUE(position) is never violated half-way
+--   3. swap_tote_positions(a_id, b_id, expect_a, expect_b) — swaps two
+--      totes' spots in ONE transaction so UNIQUE(position) is never
+--      violated half-way; refuses when a tote is not at the spot the app
+--      expected (moved on the other phone). If you ran an earlier version
+--      of this script (two-argument function), run it again: the app sends
+--      all four arguments and shows "one-time setup needed" until then.
 --   4. UNIQUE(position) — added only if missing AND no position is
 --      duplicated (otherwise a NOTICE lists the duplicates: real spots are
 --      fixed with the in-app Tidy Up, hidden "__" rows with the merge
@@ -51,7 +55,16 @@ $$;
 -- violated mid-way. All inside the function's single transaction.
 -- SECURITY INVOKER (the default): the caller's row-level-security policies
 -- apply, exactly as for a normal UPDATE from the app.
-CREATE OR REPLACE FUNCTION public.swap_tote_positions(a_id bigint, b_id bigint)
+-- An earlier version of this function took two arguments; PostgREST
+-- cannot choose between two overloads, so that one is removed first.
+DROP FUNCTION IF EXISTS public.swap_tote_positions(bigint, bigint);
+
+CREATE OR REPLACE FUNCTION public.swap_tote_positions(
+  a_id     bigint,
+  b_id     bigint,
+  expect_a text DEFAULT NULL,
+  expect_b text DEFAULT NULL
+)
 RETURNS SETOF public.totes
 LANGUAGE plpgsql
 SECURITY INVOKER
@@ -92,6 +105,17 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
+  -- The caller says where it SAW each tote (NULL = don't check). Compared
+  -- here, under the row locks, so a tote the other phone moved a moment
+  -- ago can never be traded from a spot the user didn't confirm.
+  IF (expect_a IS NOT NULL AND expect_a IS DISTINCT FROM
+        CASE WHEN a_id = lo_id THEN lo_pos ELSE hi_pos END)
+  OR (expect_b IS NOT NULL AND expect_b IS DISTINCT FROM
+        CASE WHEN b_id = lo_id THEN lo_pos ELSE hi_pos END) THEN
+    RAISE EXCEPTION 'swap_tote_positions: a tote is not at the expected position'
+      USING ERRCODE = 'GT001'; -- app-defined: the app says "moved on the other phone"
+  END IF;
+
   -- Park the first row on a unique temporary reserved position, then move
   -- the second into the freed slot, then the first into the second's slot.
   tmp_pos := '__swap__:' || lo_id::text || ':' || hi_id::text || ':'
@@ -106,7 +130,7 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.swap_tote_positions(bigint, bigint)
+GRANT EXECUTE ON FUNCTION public.swap_tote_positions(bigint, bigint, text, text)
   TO anon, authenticated;
 
 -- 4. UNIQUE(position), guarded ---------------------------------------------

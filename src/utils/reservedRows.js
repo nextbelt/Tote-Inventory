@@ -140,6 +140,21 @@ export const appendRemovedEntries =
     return pruneRemovedEntries([...list, ...fresh], now);
   };
 
+/**
+ * Item-op for the bin row: forget every entry about any of `itemIds`
+ * removed from tote `toteId` (an Undo put the item back, so the entries are
+ * stale — left behind they would offer "Put back" again once the item moves
+ * on to another tote, giving it two homes). Ids keep their types: Set.has
+ * is SameValueZero, so 7 and "7" stay apart. Idempotent.
+ */
+export const dropRemovedEntriesFor = (toteId, itemIds) => {
+  const ids = new Set(asArray(itemIds));
+  return (items) =>
+    asArray(items).filter(
+      (e) => !(isRemovedEntry(e) && e.toteId === toteId && ids.has(e.item.id))
+    );
+};
+
 /** Flatten every bin row's entries into one pruned list. */
 export function removedEntriesFromRows(rows, now = Date.now()) {
   const all = [];

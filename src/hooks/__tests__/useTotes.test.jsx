@@ -38,7 +38,10 @@ describe("useTotes: recently deleted", () => {
       "purgeDeletedTote",
       "recordRemovedItems",
       "listRemovedItems",
+      "forgetRemovedItems",
       "restoreRemovedItem",
+      "updateTags",
+      "updateNotes",
     ]) {
       expect(typeof result.current[fn]).toBe("function");
     }
