@@ -378,6 +378,23 @@ export function ToteProvider({ children }) {
     return savedTote;
   }, []);
 
+  /** Edit one tote's tags by delta (utils/tagOps), merged by the service
+   *  into the tags as STORED (compare-and-swap). Resolves to
+   *  { tote, applied } — `applied` is what the write really changed. */
+  const updateTags = useCallback(async (id, delta) => {
+    const result = await toteService.updateTags(id, delta);
+    setTotes((prev) => withSavedRow(prev, result?.tote));
+    return result;
+  }, []);
+
+  /** Save one tote's note unless it changed since the editor opened
+   *  (`expected`): then rejects with code NOTES_CHANGED, details.theirs. */
+  const updateNotes = useCallback(async (id, notes, options) => {
+    const savedTote = await toteService.updateNotes(id, notes, options);
+    setTotes((prev) => withSavedRow(prev, savedTote));
+    return savedTote;
+  }, []);
+
   /** Change one tote's items by applying a pure operation (utils/itemOps)
    *  to the freshest stored copy — safe against the other phone editing the
    *  same tote at the same time. */
@@ -459,9 +476,11 @@ export function ToteProvider({ children }) {
     [restoreDeletedTote, saveTote, updateItems]
   );
 
-  /** Swap two totes' spots in one step (cloud: one database transaction). */
-  const swapTotes = useCallback(async (aId, bId) => {
-    const rows = await toteService.swapTotes(aId, bId);
+  /** Swap two totes' spots in one step (cloud: one database transaction).
+   *  `options.expectA/expectB`: the spots the user saw — the swap is refused
+   *  (code TOTE_MOVED) when either tote is no longer there. */
+  const swapTotes = useCallback(async (aId, bId, options) => {
+    const rows = await toteService.swapTotes(aId, bId, options);
     setTotes((prev) =>
       prev.map((t) => rows.find((r) => r.id === t.id) || t)
     );
@@ -476,6 +495,12 @@ export function ToteProvider({ children }) {
 
   /** Entries in the removed-items bin, newest first. */
   const listRemovedItems = useCallback(() => toteService.listRemovedItems(), []);
+
+  /** Drop the bin entries for items an Undo put back into `toteId`. */
+  const forgetRemovedItems = useCallback(
+    (toteId, itemIds) => toteService.forgetRemovedItems(toteId, itemIds),
+    []
+  );
 
   /** Put a removed item back into its tote (or `targetToteId`). */
   const restoreRemovedItem = useCallback(async (entryId, targetToteId) => {
@@ -559,6 +584,8 @@ export function ToteProvider({ children }) {
       loadData,
       saveTote,
       updateTote,
+      updateTags,
+      updateNotes,
       updateItems,
       deleteTote,
       moveTote,
@@ -575,6 +602,7 @@ export function ToteProvider({ children }) {
       purgeDeletedTote,
       recordRemovedItems,
       listRemovedItems,
+      forgetRemovedItems,
       restoreRemovedItem,
     }),
     [
@@ -589,6 +617,8 @@ export function ToteProvider({ children }) {
       loadData,
       saveTote,
       updateTote,
+      updateTags,
+      updateNotes,
       updateItems,
       deleteTote,
       moveTote,
@@ -603,6 +633,7 @@ export function ToteProvider({ children }) {
       purgeDeletedTote,
       recordRemovedItems,
       listRemovedItems,
+      forgetRemovedItems,
       restoreRemovedItem,
     ]
   );

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { addItem, adjustQty } from "../../utils/itemOps";
+import { addItem, adjustQty, removeItem, restoreItem } from "../../utils/itemOps";
 
 // Local (localStorage) mode — the Supabase module is aliased to null in tests.
 const STORE = "totes-inventory";
@@ -46,6 +46,29 @@ describe("local mode: capabilities and swap", () => {
     await expect(toteService.swapTotes(1, 9)).rejects.toThrow(/no longer exists/i);
     await toteService.deleteTote(2);
     await expect(toteService.swapTotes(1, 2)).rejects.toThrow(/can't be swapped/i);
+  });
+
+  it("swapTotes with the spots the user saw: refuses (TOTE_MOVED) when a tote is elsewhere now, swaps when both match", async () => {
+    await toteService.updateTote(2, { position: "A1" }); // moved meanwhile
+    await expect(
+      toteService.swapTotes(1, 2, { expectA: "B3", expectB: "C4" })
+    ).rejects.toMatchObject({ code: "TOTE_MOVED", message: /“Sports” was moved/ });
+    expect(read().map((t) => t.position)).toEqual(["B3", "A1"]);
+    const [a, b] = await toteService.swapTotes(1, 2, { expectA: "B3", expectB: "A1" });
+    expect(a.position).toBe("A1");
+    expect(b.position).toBe("B3");
+  });
+
+  it("updateTags merges a delta into the stored tags; updateNotes refuses a changed note", async () => {
+    await toteService.updateTote(1, { tags: ["Xmas"], notes: "lid cracked" });
+    const { tote, applied } = await toteService.updateTags(1, { added: ["Lights", "xmas"], removed: [] });
+    expect(tote.tags).toEqual(["Xmas", "Lights"]);
+    expect(applied).toEqual({ added: ["Lights"], removed: [] });
+    await expect(
+      toteService.updateNotes(1, "Fragile", { expected: null })
+    ).rejects.toMatchObject({ code: "NOTES_CHANGED", details: { theirs: "lid cracked" } });
+    const saved = await toteService.updateNotes(1, "Fragile", { expected: "lid cracked" });
+    expect(saved.notes).toBe("Fragile");
   });
 });
 
@@ -139,6 +162,33 @@ describe("local mode: removed-items bin", () => {
     expect(saved.id).toBe(2);
     expect(saved.items).toEqual([lantern]);
   });
+
+  it("remove → Undo (forget) → move → bin: nothing to put back and never a second home", async () => {
+    // Remove, recorded in the bin
+    await toteService.updateItems(1, removeItem("i1"));
+    await toteService.recordRemovedItems(camping, [lantern]);
+    expect(await toteService.listRemovedItems()).toHaveLength(1);
+    // Undo puts it back and drops the entry
+    await toteService.updateItems(1, restoreItem(lantern, 0));
+    expect(await toteService.forgetRemovedItems(1, ["i1"])).toBe(1);
+    expect(await toteService.listRemovedItems()).toEqual([]);
+    // Later moved to Sports
+    await toteService.updateItems(2, addItem(lantern));
+    await toteService.updateItems(1, removeItem("i1"));
+    expect(await toteService.listRemovedItems()).toEqual([]); // still nothing stale
+
+    // And had the forget failed (entry left behind), Put back refuses rather
+    // than give Lantern a second home — and cleans the entry up
+    await toteService.recordRemovedItems(camping, [lantern]); // the stale entry
+    const [stale] = await toteService.listRemovedItems();
+    await expect(toteService.restoreRemovedItem(stale.id)).rejects.toMatchObject({
+      code: "ALREADY_THERE",
+      details: { toteId: 2, toteName: "Sports" },
+    });
+    expect(read().find((t) => t.id === 1).items).toEqual([]);
+    expect(read().find((t) => t.id === 2).items).toEqual([lantern]);
+    expect(await toteService.listRemovedItems()).toEqual([]);
+  });
 });
 
 describe("local mode: updateItems never writes a reserved row", () => {
@@ -169,11 +219,21 @@ describe("local mode: updateItems never writes a reserved row", () => {
     await expect(toteService.updateItems(binId, () => [])).rejects.toThrow(/find that tote/i);
     expect(read().find((t) => t.id === binId).items).toHaveLength(1);
 
-    // The bin's internal append / drop path is unaffected by the guard
+    // The bin's internal append / drop path is unaffected by the guard.
+    // (Lantern was never actually removed from Camping here, so Put back
+    // refuses — and drops the stale entry through that same bin path.)
     await toteService.recordRemovedItems(camping, [glue]);
     expect(read().find((t) => t.id === binId).items).toHaveLength(2);
-    const [entry] = await toteService.listRemovedItems();
-    await toteService.restoreRemovedItem(entry.id);
+    const stale = (await toteService.listRemovedItems()).find((e) => e.item.id === "i1");
+    await expect(toteService.restoreRemovedItem(stale.id)).rejects.toMatchObject({
+      code: "ALREADY_THERE",
+    });
     expect(read().find((t) => t.id === binId).items).toHaveLength(1);
+    expect(read().find((t) => t.id === 1).items).toEqual([lantern]); // still just one
+    const [entry] = await toteService.listRemovedItems();
+    expect(entry.item.id).toBe("i3");
+    await toteService.restoreRemovedItem(entry.id);
+    expect(read().find((t) => t.id === binId).items).toHaveLength(0);
+    expect(read().find((t) => t.id === 1).items).toEqual([lantern, glue]);
   });
 });
